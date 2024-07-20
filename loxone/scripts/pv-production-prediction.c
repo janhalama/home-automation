@@ -5,6 +5,7 @@ The script should not bet triggered more than once a day to avoid unnecessary AP
 
 Inputs:
 - Input 1: Trigger event to fetch the data
+- Text Input 1: MeteoBlue API key
 
 Outputs:
 - Output 1: PV production prediction for today
