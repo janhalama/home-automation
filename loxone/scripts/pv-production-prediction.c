@@ -48,7 +48,9 @@ while (TRUE) {
     nEvents = getinputevent();
     if (nEvents & 0xFF || !initialFetchDone) {  // Mask 0xFF to respond to any input event
 
-         = getinputtext(0)
+        // Fetch the API key from the text input
+        apiKey = getinputtext(0);
+
         // Format the full URL using sprintf
         sprintf(url, URL_PATH_FORMAT, LATITUDE, LONGITUDE, KWP, SLOPE, FACING, POWER_EFFICIENCY, TRACKER, apiKey);
         
