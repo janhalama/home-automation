@@ -57,6 +57,7 @@ https://smarthome.exposed/wattsonic-hybrid-inverter-gen3-modbus-rtu-protocol
 #define OUTPUT_BATTERY_CHARGE_BY 3
 #define OUTPUT_BATTERY_CHARGE_DISCHARGE_LIMIT 4
 #define OUTPUT_GRID_INJECTION_LIMIT 5
+#define OUTPUT_ONGRID_SOC_PROTECTION 6
 
 // Constants for text output indexes
 #define TEXT_OUTPUT_MODE 0
