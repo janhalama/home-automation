@@ -144,7 +144,7 @@ void updateInverterState() {
         sprintf(inverterState, "Discharging to grid");
     } else if (currentSpotPrice > spotPriceTreshold && 
                predictedPVToday > pvProductionThreshold &&
-               pwPowerNow > 0 && // Only if PV is producing more than 0W
+               //pwPowerNow > 0 && // This is dangerous, it could lead to switching the mode of the inverter when the production is oscillating around 0
                soc > socTreshold &&
                hourNow > MORNING_HOURS_FROM && hourNow < MORNING_HOURS_TILL) { //only in morning hours
         newMode = INVERTER_ECONOMIC_MODE;
