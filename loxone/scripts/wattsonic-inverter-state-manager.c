@@ -14,6 +14,7 @@
  - Input 10: Predicted PV production treshold to push to grid
  - Input 11: Spot price threshold to enable PV push to grid
  - Input 12: SOC
+ - Input 13: On-grid end SOC protection
 
  Outputs:
  - Output 1: Inverter working mode
@@ -22,6 +23,7 @@
  - Output 4: Battery Charge By
  - Output 5: Battery Charge & Discharge Power Limit
  - Output 6: Grid Injection Power Limit
+ - Output 7: On-grid end SOC protection
  - Text Output 1: Current inverter working mode
  - Text Output 2: Inverter state
  - Text Output 3: Debug information
@@ -42,6 +44,7 @@ https://smarthome.exposed/wattsonic-hybrid-inverter-gen3-modbus-rtu-protocol
 
 // Constants for inverter state
 #define MORNING_HOURS_TILL 12
+#define MORNING_HOURS_FROM 5
 #define BATTERY_POWER_LIMIT_MAX 80
 #define BATTERY_POWER_LIMIT_OFF 0
 #define GRID_INJECTION_POWER_LIMIT_MAX 80
@@ -63,6 +66,8 @@ https://smarthome.exposed/wattsonic-hybrid-inverter-gen3-modbus-rtu-protocol
 // Virtual input connection addresses
 #define VI_PV_PRODUCTION_TODAY "VI1"
 #define VI_PV_PRODUCTION_TOMMORROW "VI2"
+#define VI_PV_POWER_NOW "AMQ125"
+#define VI_ONGRID_SOC_PROTECTION_USER_SETTING "VI16"
 
 // Define input indexes as constants
 #define INPUT_CURRENT_SPOT_PRICE 0
@@ -77,6 +82,7 @@ https://smarthome.exposed/wattsonic-hybrid-inverter-gen3-modbus-rtu-protocol
 #define INPUT_PV_PRODUCTION_THRESHOLD 9
 #define INPUT_SPOT_PRICE_THRESHOLD 10
 #define INPUT_SOC 11
+#define INPUT_ONGRID_SOC_PROTECTION 12
 
 // Function to map inverter mode to a human-readable string
 char* mapInverterMode(float mode) {
@@ -106,6 +112,10 @@ void updateInverterState() {
     float pvProductionThreshold = getinput(INPUT_PV_PRODUCTION_THRESHOLD);
     float spotPriceTreshold = getinput(INPUT_SPOT_PRICE_THRESHOLD);
     float soc = getinput(INPUT_SOC);
+    float onGridEndSOCProtection = getinput(INPUT_ONGRID_SOC_PROTECTION);
+    float onGridEndSOCProtectionUserSetting = getio(VI_ONGRID_SOC_PROTECTION_USER_SETTING);
+    float pwPowerNow = getio(VI_PV_POWER_NOW);
+    
     float newMode = currentInverterMode;
     int batteryMode = BATTERY_NO_MODE;
     int batteryChargeDischargePowerLimit = BATTERY_POWER_LIMIT_OFF;
@@ -120,6 +130,7 @@ void updateInverterState() {
         newMode = INVERTER_ECONOMIC_MODE;
         batteryMode = BATTERY_CHARGE_MODE; // Charge from grid
         batteryChargeDischargePowerLimit = BATTERY_POWER_LIMIT_MAX; // Limit battery charging power to max allowed value
+        onGridEndSOCProtection = onGridEndSOCProtectionUserSetting; // Set on-grid end SOC protection to user setting
         sprintf(inverterState, "Charging from grid");
     } else if (fabs(maxSpotPrice - currentSpotPrice) <= 0.5 && // Spot price is close to max
                currentSpotPrice >= dischargeSpotPriceThreshold && // Spot price is above discharge threshold
@@ -128,19 +139,24 @@ void updateInverterState() {
         batteryMode = BATTERY_DISCHARGE_MODE; // Discharge to grid
         batteryChargeDischargePowerLimit = BATTERY_POWER_LIMIT_MAX; // Limit discharging power to max allowed value
         gridInjectionPowerLimit = GRID_INJECTION_POWER_LIMIT_MAX; // Allow maximum allowed power to be injected to grid
+        onGridEndSOCProtection = onGridEndSOCProtectionUserSetting; // Set on-grid end SOC protection to user setting
         sprintf(inverterState, "Discharging to grid");
-    } else if (1 == 0 && // Disable morning PV push to grid mode for now, the battery is being discharged to grid, need to figure out how to handle this
-               currentSpotPrice > spotPriceTreshold && 
+    } else if (currentSpotPrice > spotPriceTreshold && 
                predictedPVToday > pvProductionThreshold &&
+               pwPowerNow > 0 && // Only if PV is producing more than 0W
                soc > socTreshold &&
-               hourNow < MORNING_HOURS_TILL) { //only in morning hours
+               hourNow > MORNING_HOURS_FROM && hourNow < MORNING_HOURS_TILL) { //only in morning hours
         newMode = INVERTER_ECONOMIC_MODE;
-        batteryMode = BATTERY_NO_MODE; // None - do not charge & discharge
+        batteryMode = BATTERY_DISCHARGE_MODE;
+        if(soc > onGridEndSOCProtection) {
+            onGridEndSOCProtection = soc; // Set on-grid end SOC protection to current SOC to prevent battery from discharging to the grid
+        }
         batteryChargeDischargePowerLimit = BATTERY_POWER_LIMIT_OFF; // Switch off battery discharging by setting limit to 0
         gridInjectionPowerLimit = GRID_INJECTION_POWER_LIMIT_MAX; // Allow maximum allowed power to be injected to grid
         sprintf(inverterState, "Morning push to grid");
     } else {
         newMode = INVERTER_GENERAL_MODE;
+        onGridEndSOCProtection = onGridEndSOCProtectionUserSetting; // Set on-grid end SOC protection to user setting
         if(currentSpotPrice > spotPriceTreshold) {
             gridInjectionPowerLimit = GRID_INJECTION_POWER_LIMIT_MAX; // Allow maximum allowed power to be injected to grid
             sprintf(inverterState, "Grid injection enabled");
@@ -156,6 +172,7 @@ void updateInverterState() {
     setoutput(OUTPUT_BATTERY_CHARGE_BY, 1); // Battery charges by PV+Grid
     setoutput(OUTPUT_BATTERY_CHARGE_DISCHARGE_LIMIT, batteryChargeDischargePowerLimit * 10); // Battery Charge&Discharge Power Limit
     setoutput(OUTPUT_GRID_INJECTION_LIMIT, gridInjectionPowerLimit * 10); // Set grid injection power limit based on current spot price
+    setoutput(OUTPUT_ONGRID_SOC_PROTECTION, onGridEndSOCProtection); // Set on-grid end SOC protection
 
     // Set text output for inverter mode
     setoutputtext(TEXT_OUTPUT_MODE, mapInverterMode(newMode));
@@ -164,7 +181,7 @@ void updateInverterState() {
     setoutputtext(TEXT_OUTPUT_INVERTER_STATE, inverterState);
 
     sprintf(inputs,
-            "Current spot price: %f\nMin spot price today: %f\nMax spot price today: %f\nCharge threshold: %f\nDischarge threshold: %f\nSOC threshold: %f\nCurrent inverter mode: %s\nPredicted PV today: %f\nPredicted PV tomorrow: %f\nPV production prediction threshold to discharge to grid or postpone morning production: %f\nSpot price threshold to push to grid: %f\nSOC: %f\nHour: %f\nBattery charge/discharge power limit: %d kW\nGrid injection power limit: %d kW\n",
+            "Current spot price: %f\nMin spot price today: %f\nMax spot price today: %f\nCharge threshold: %f\nDischarge threshold: %f\nSOC threshold: %f\nCurrent inverter mode: %s\nPredicted PV today: %f\nPredicted PV tomorrow: %f\nPV production prediction threshold to discharge to grid or postpone morning production: %f\nSpot price threshold to push to grid: %f\nSOC: %f\nHour: %f\nBattery charge/discharge power limit: %d kW\nGrid injection power limit: %d kW\nOn-grid end SOC protection: %f\nOn-grid end SOC protection: %f\nOn-grid end SOC protection user setting: %f\nPV power now: %f W",
             currentSpotPrice,
             minSpotPrice,
             maxSpotPrice,
@@ -179,7 +196,10 @@ void updateInverterState() {
             soc,
             hourNow,
             batteryChargeDischargePowerLimit,
-            gridInjectionPowerLimit);
+            gridInjectionPowerLimit,
+            onGridEndSOCProtection,
+            onGridEndSOCProtectionUserSetting,
+            pwPowerNow);
 
     // Set text output for debug inputs
     setoutputtext(TEXT_OUTPUT_DEBUG_INPUTS, inputs);
