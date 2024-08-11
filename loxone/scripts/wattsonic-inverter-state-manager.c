@@ -132,6 +132,8 @@ void updateInverterState() {
         batteryMode = BATTERY_CHARGE_MODE; // Charge from grid
         batteryChargeDischargePowerLimit = BATTERY_POWER_LIMIT_MAX; // Limit battery charging power to max allowed value
         onGridEndSOCProtection = onGridEndSOCProtectionUserSetting; // Set on-grid end SOC protection to user setting
+        gridInjectionPowerLimit = GRID_INJECTION_POWER_LIMIT_OFF; // Do not inject power to grid
+        onGridEndSOCProtection = 100.0; // Set on-grid end SOC protection to 100% to prevent battery from discharging to the grid
         sprintf(inverterState, "Charging from grid");
     } else if (fabs(maxSpotPrice - currentSpotPrice) <= 0.5 && // Spot price is close to max
                currentSpotPrice >= dischargeSpotPriceThreshold && // Spot price is above discharge threshold
