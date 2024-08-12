@@ -147,7 +147,8 @@ void updateInverterState() {
     } else if (currentSpotPrice > spotPriceTreshold && 
                predictedPVToday > pvProductionThreshold &&
                //pwPowerNow > 0 && // This is dangerous, it could lead to switching the mode of the inverter when the production is oscillating around 0
-               soc > socTreshold &&
+               ((currentInverterMode != INVERTER_ECONOMIC_MODE && soc > socTreshold) ||
+                (currentInverterMode == INVERTER_ECONOMIC_MODE && soc > (socTreshold - 5))) && // SOC is above threshold with hysteresis
                hourNow > MORNING_HOURS_FROM && hourNow < MORNING_HOURS_TILL) { //only in morning hours
         newMode = INVERTER_ECONOMIC_MODE;
         batteryMode = BATTERY_DISCHARGE_MODE;
