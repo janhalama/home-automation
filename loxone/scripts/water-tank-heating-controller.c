@@ -28,50 +28,47 @@
 // Virtual input connection addresses
 #define VI_PV_POWER_NOW "AMQ125"
 
-#define PV_POWER_THRESHOLD_IN_KW 2.5 // This is exactly the power the water heater consumes
-#define PV_LOW_PRODUCTION_THRESHOLD_IN_KW 15 // This is the minimum power the PV should produce to charge the water tank and supply the house
+// This is exactly the power the water heater consumes
+#define PV_POWER_THRESHOLD_IN_KW 2.5
+
+// This is the minimum power the PV should produce to charge the water tank and supply the house
+#define PV_LOW_PRODUCTION_THRESHOLD_IN_KW 15
 
 
 // Control the heating based on the inputs
 void controlHeating() {
 
     char inputs[1024];
-    float temperatureBelowTreshold = getinput(INPUT_WATER_TANK_TEMPERATURE_BELOW_TRESHOLD);
-    float spotPriceIsVeryLow = getinput(INPUT_SPOT_PRICE_VLOW);
+    int temperatureBelowTreshold = getinput(INPUT_WATER_TANK_TEMPERATURE_BELOW_TRESHOLD) == 1;
+    float spotPriceIsVeryLow = getinput(INPUT_SPOT_PRICE_VLOW) == 1;
     float predictedPVToday = getinput(INPUT_PREDICTED_PV_TODAY);
     float predictedPVTommorrow = getinput(INPUT_PREDICTED_PV_TOMORROW);
     float pwPowerNow = getio(VI_PV_POWER_NOW);
     int hourNow = gethour(getcurrenttime(), 1);
-
-    if(temperatureBelowTreshold) {
-        if(hourNow >= 6 && hourNow <= 20) { // During the day
-            if(spotPriceIsVeryLow && (predictedPVToday < PV_LOW_PRODUCTION_THRESHOLD_IN_KW)) { // Charge even though the PV power now is low, when the prediction for todays production is low
-                setoutput(OUTPUT_HEATING_ON_OFF, 1);
-            } else { // The PV power is high enough, charge only if there is enough PV production at the moment
-                if (spotPriceIsVeryLow && (pwPowerNow > PV_POWER_THRESHOLD_IN_KW)) {
-                    setoutput(OUTPUT_HEATING_ON_OFF, 1);
-                } else { // Do not charge if the PV production is not high enough or the spot price is not very low
-                    setoutput(OUTPUT_HEATING_ON_OFF, 0);
-                }
-            }
-        } else { // During the night
-            if(spotPriceIsVeryLow && (predictedPVTommorrow < PV_LOW_PRODUCTION_THRESHOLD_IN_KW)) { // Charge the water tank during the night if the PV production prediction for tomorrow is low and the spot price is very low
-                setoutput(OUTPUT_HEATING_ON_OFF, 1);
-            } else {
-                setoutput(OUTPUT_HEATING_ON_OFF, 0);
-            }
-        }
+    int canCharge = 0;
+    int sufficientPVPowerNow = pwPowerNow > PV_POWER_THRESHOLD_IN_KW;
+    int sufficientPVProductionToday = predictedPVToday > PV_LOW_PRODUCTION_THRESHOLD_IN_KW;
+    int sufficientPVProductionTomorrow = predictedPVTommorrow > PV_LOW_PRODUCTION_THRESHOLD_IN_KW;
+    
+    // TODO: use better algorithm to determine that the hour is during the day (sunrise to sunset)
+    if(hourNow >= 6 && hourNow < 21) {
+        // During the day
+        canCharge = !sufficientPVProductionToday || sufficientPVPowerNow;
     } else {
-        setoutput(OUTPUT_HEATING_ON_OFF, 0);
+        // During the night
+        canCharge = !sufficientPVProductionTomorrow;
     }
 
+    setoutput(OUTPUT_HEATING_ON_OFF, canCharge && temperatureBelowTreshold);
+
     sprintf(inputs,
-            "Inputs:\n - Water tank temperature below treshold: %f\n - Spot price is very low: %f\n - Predicted PV production for tomorrow: %f\n - Predicted PV production for today: %f\n - Current PV production: %f\n",
+            "Inputs:\n - Water tank temperature below treshold: %d\n - Spot price is very low: %f\n - Predicted PV production for tomorrow: %f\n - Predicted PV production for today: %f\n - Current PV production: %f\n - Can charge: %d",
             temperatureBelowTreshold,
             spotPriceIsVeryLow,
             predictedPVTommorrow,
             predictedPVToday,
-            pwPowerNow);
+            pwPowerNow,
+            canCharge);
 
     // Set text output for debug inputs
     setoutputtext(TEXT_OUTPUT_DEBUG, inputs);
