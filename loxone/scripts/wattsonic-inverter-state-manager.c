@@ -24,6 +24,7 @@
  - Output 5: Battery Charge & Discharge Power Limit
  - Output 6: Grid Injection Power Limit
  - Output 7: On-grid end SOC protection
+ - Output 8: Morning push to grid enabled
  - Text Output 1: Current inverter working mode
  - Text Output 2: Inverter state
  - Text Output 3: Debug information
@@ -58,6 +59,7 @@ https://smarthome.exposed/wattsonic-hybrid-inverter-gen3-modbus-rtu-protocol
 #define OUTPUT_BATTERY_CHARGE_DISCHARGE_LIMIT 4
 #define OUTPUT_GRID_INJECTION_LIMIT 5
 #define OUTPUT_ONGRID_SOC_PROTECTION 6
+#define OUTPUT_MORNING_PUSH_TO_GRID_ENABLED 7
 
 // Constants for text output indexes
 #define TEXT_OUTPUT_MODE 0
@@ -124,6 +126,7 @@ void updateInverterState() {
     int hourNow = gethour(getcurrenttime(), 1);
     char inverterState[512];
     char inputs[1024];
+    int morningPushToGridEnabled = 0;
 
     // Determine the inverter mode and battery operation
 
@@ -157,6 +160,7 @@ void updateInverterState() {
         }
         batteryChargeDischargePowerLimit = BATTERY_POWER_LIMIT_OFF; // Switch off battery discharging by setting limit to 0
         gridInjectionPowerLimit = GRID_INJECTION_POWER_LIMIT_MAX; // Allow maximum allowed power to be injected to grid
+        morningPushToGridEnabled = 1;
         sprintf(inverterState, "Morning push to grid");
     } else {
         newMode = INVERTER_GENERAL_MODE;
@@ -177,6 +181,7 @@ void updateInverterState() {
     setoutput(OUTPUT_BATTERY_CHARGE_DISCHARGE_LIMIT, batteryChargeDischargePowerLimit * 10); // Battery Charge&Discharge Power Limit
     setoutput(OUTPUT_GRID_INJECTION_LIMIT, gridInjectionPowerLimit * 10); // Set grid injection power limit based on current spot price
     setoutput(OUTPUT_ONGRID_SOC_PROTECTION, onGridEndSOCProtection); // Set on-grid end SOC protection
+    setoutput(OUTPUT_MORNING_PUSH_TO_GRID_ENABLED, morningPushToGridEnabled); // Set morning push to grid enabled flag
 
     // Set text output for inverter mode
     setoutputtext(TEXT_OUTPUT_MODE, mapInverterMode(newMode));

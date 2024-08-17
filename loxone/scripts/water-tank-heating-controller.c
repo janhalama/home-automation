@@ -6,6 +6,8 @@
  - Input 2: The spot price is very low
  - Input 3: PV production prediction for today
  - Input 4: PV production prediction for tomorrow
+ - Input 5: Inverter working mode
+ - Input 6: Morning push to grid enabled
 
  Outputs:
  - Output 1: Heating On / Off
@@ -24,6 +26,8 @@
 #define INPUT_SPOT_PRICE_VLOW 1
 #define INPUT_PREDICTED_PV_TODAY 2
 #define INPUT_PREDICTED_PV_TOMORROW 3
+#define INPUT_INVERTER_MODE 4
+#define INPUT_MORNING_PUSH_TO_GRID_ENABLED 5
 
 // Virtual input connection addresses
 #define VI_PV_POWER_NOW "AMQ125"
@@ -34,6 +38,11 @@
 // This is the minimum power the PV should produce to charge the water tank and supply the house
 #define PV_LOW_PRODUCTION_THRESHOLD_IN_KW 15
 
+// Define constants for inverter modes
+#define INVERTER_GENERAL_MODE 257
+#define INVERTER_ECONOMIC_MODE 258
+#define INVERTER_UPS_MODE 259
+
 
 // Control the heating based on the inputs
 void controlHeating() {
@@ -43,6 +52,8 @@ void controlHeating() {
     int spotPriceIsVeryLow = getinput(INPUT_SPOT_PRICE_VLOW) == 1;
     float predictedPVToday = getinput(INPUT_PREDICTED_PV_TODAY);
     float predictedPVTommorrow = getinput(INPUT_PREDICTED_PV_TOMORROW);
+    int inverterMode = getinput(INPUT_INVERTER_MODE);
+    int morningPushToGridEnabled = getinput(INPUT_MORNING_PUSH_TO_GRID_ENABLED) == 1;
     float pwPowerNow = getio(VI_PV_POWER_NOW);
     int hourNow = gethour(getcurrenttime(), 1);
     int canCharge = 0;
@@ -59,17 +70,18 @@ void controlHeating() {
         canCharge = !sufficientPVProductionTomorrow && spotPriceIsVeryLow;
     }
 
-    // Set the heating output based on the inputs and the control logic above
-    setoutput(OUTPUT_HEATING_ON_OFF, canCharge && temperatureBelowTreshold);
+    // Do not charge the water tank if the morning push to grid is enabled, it may cause charging the water tank with grid power
+    setoutput(OUTPUT_HEATING_ON_OFF, canCharge && temperatureBelowTreshold && !morningPushToGridEnabled);
 
     sprintf(inputs,
-            "Inputs:\n - Water tank temperature below treshold: %d\n - Spot price is very low: %f\n - Predicted PV production for tomorrow: %f\n - Predicted PV production for today: %f\n - Current PV production: %f\n - Can charge: %d",
+            "Inputs:\n - Water tank temperature below treshold: %d\n - Spot price is very low: %f\n - Predicted PV production for tomorrow: %f\n - Predicted PV production for today: %f\n - Current PV production: %f\n - Can charge: %d\n - Morning push to grid enabled: %d",
             temperatureBelowTreshold,
             spotPriceIsVeryLow,
             predictedPVTommorrow,
             predictedPVToday,
             pwPowerNow,
-            canCharge);
+            canCharge,
+            morningPushToGridEnabled);
 
     // Set text output for debug inputs
     setoutputtext(TEXT_OUTPUT_DEBUG, inputs);
