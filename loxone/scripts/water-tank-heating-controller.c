@@ -40,7 +40,7 @@ void controlHeating() {
 
     char inputs[1024];
     int temperatureBelowTreshold = getinput(INPUT_WATER_TANK_TEMPERATURE_BELOW_TRESHOLD) == 1;
-    float spotPriceIsVeryLow = getinput(INPUT_SPOT_PRICE_VLOW) == 1;
+    int spotPriceIsVeryLow = getinput(INPUT_SPOT_PRICE_VLOW) == 1;
     float predictedPVToday = getinput(INPUT_PREDICTED_PV_TODAY);
     float predictedPVTommorrow = getinput(INPUT_PREDICTED_PV_TOMORROW);
     float pwPowerNow = getio(VI_PV_POWER_NOW);
@@ -53,12 +53,13 @@ void controlHeating() {
     // TODO: use better algorithm to determine that the hour is during the day (sunrise to sunset)
     if(hourNow >= 6 && hourNow < 21) {
         // During the day
-        canCharge = !sufficientPVProductionToday || sufficientPVPowerNow;
+        canCharge = !sufficientPVProductionToday || (sufficientPVPowerNow && spotPriceIsVeryLow);
     } else {
         // During the night
-        canCharge = !sufficientPVProductionTomorrow;
+        canCharge = !sufficientPVProductionTomorrow && spotPriceIsVeryLow;
     }
 
+    // Set the heating output based on the inputs and the control logic above
     setoutput(OUTPUT_HEATING_ON_OFF, canCharge && temperatureBelowTreshold);
 
     sprintf(inputs,
