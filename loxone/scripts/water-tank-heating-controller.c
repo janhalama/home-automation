@@ -38,7 +38,7 @@
 #define PV_POWER_THRESHOLD_IN_KW 2.5
 
 // This is the minimum power the PV should produce to charge the water tank and supply the house during the day
-#define PV_LOW_PRODUCTION_THRESHOLD_IN_KW 15
+#define PV_LOW_PRODUCTION_THRESHOLD_IN_KW 20
 
 // Define constants for inverter modes
 #define INVERTER_GENERAL_MODE 257
@@ -67,7 +67,9 @@ void controlHeating() {
     // TODO: use better algorithm to determine that the hour is during the day (sunrise to sunset)
     if(hourNow >= 6 && hourNow < 21) {
         // During the day
-        canCharge = !sufficientPVProductionToday || (sufficientPVPowerNow && spotPriceIsVeryLow);
+        canCharge = 
+            (!sufficientPVProductionToday && spotPriceIsVeryLow) ||
+            (sufficientPVPowerNow && spotPriceIsVeryLow);
     } else {
         // During the night
         canCharge = !sufficientPVProductionTomorrow && spotPriceIsVeryLow;
