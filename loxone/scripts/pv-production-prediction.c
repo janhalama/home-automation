@@ -34,7 +34,7 @@ Outputs:
 #define VI_PV_PRODUCTION_TODAY "VI9"
 #define VI_PV_PRODUCTION_TOMMORROW "VI10"
 
-#define PREDICTION_COEFICIENT 0.5 // The prediction is consistently off by 50%
+#define PREDICTION_COEFICIENT 0.6 // The prediction is consistently off by 60%
 
 int nEvents;
 char url[512];  // Buffer for the formatted API request URL
