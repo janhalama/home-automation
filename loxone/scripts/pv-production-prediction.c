@@ -34,6 +34,8 @@ Outputs:
 #define VI_PV_PRODUCTION_TODAY "VI9"
 #define VI_PV_PRODUCTION_TOMMORROW "VI10"
 
+#define PREDICTION_COEFICIENT 0.5 // The prediction is consistently off by 50%
+
 int nEvents;
 char url[512];  // Buffer for the formatted API request URL
 char* apiKey;
@@ -75,8 +77,8 @@ while (TRUE) {
                     if (end != NULL) {
                         *end = '\0';
                         pvPowerToday = atof(start);  // Convert the substring to a float
-                        setoutput(OUTPUT_PV_PRODUCTION_TODAY, pvPowerToday);
-						setio(VI_PV_PRODUCTION_TODAY,pvPowerToday);
+                        setoutput(OUTPUT_PV_PRODUCTION_TODAY, pvPowerToday * PREDICTION_COEFICIENT);
+						setio(VI_PV_PRODUCTION_TODAY,pvPowerToday * PREDICTION_COEFICIENT);
                         printf("First PV Power Prediction for Today: %.3f kW\n", pvPowerToday);
                         
                         // Reset the start pointer to fetch the next prediction
@@ -88,8 +90,8 @@ while (TRUE) {
                         if (end != NULL) {
                             *end = '\0';
                             pvPowerTomorrow = atof(start);  // Convert the next substring to a float
-                            setoutput(OUTPUT_PV_PRODUCTION_TOMORROW, pvPowerTomorrow);
-							setio(VI_PV_PRODUCTION_TOMMORROW,pvPowerTomorrow);
+                            setoutput(OUTPUT_PV_PRODUCTION_TOMORROW, pvPowerTomorrow * PREDICTION_COEFICIENT);
+							setio(VI_PV_PRODUCTION_TOMMORROW,pvPowerTomorrow * PREDICTION_COEFICIENT);
                             printf("Second PV Power Prediction for Tomorrow: %.3f kW\n", pvPowerTomorrow);
                         }
                     }
