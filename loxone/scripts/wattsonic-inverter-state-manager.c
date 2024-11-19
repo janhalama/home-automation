@@ -46,7 +46,8 @@ https://smarthome.exposed/wattsonic-hybrid-inverter-gen3-modbus-rtu-protocol
 // Constants for inverter state
 #define MORNING_HOURS_TILL 12
 #define MORNING_HOURS_FROM 5
-#define BATTERY_POWER_LIMIT_MAX 80
+#define BATTERY_POWER_LIMIT_DISCHARGE_MAX 80
+#define BATTERY_POWER_LIMIT_CHARGE_MAX 50
 #define BATTERY_POWER_LIMIT_OFF 0
 #define GRID_INJECTION_POWER_LIMIT_MAX 80
 #define GRID_INJECTION_POWER_LIMIT_OFF 0
@@ -133,7 +134,7 @@ void updateInverterState() {
     if (currentSpotPrice < chargeSpotPriceThreshold) {
         newMode = INVERTER_ECONOMIC_MODE;
         batteryMode = BATTERY_CHARGE_MODE; // Charge from grid
-        batteryChargeDischargePowerLimit = BATTERY_POWER_LIMIT_MAX; // Limit battery charging power to max allowed value
+        batteryChargeDischargePowerLimit = BATTERY_POWER_LIMIT_CHARGE_MAX; // Limit battery charging power to max allowed value
         onGridEndSOCProtection = onGridEndSOCProtectionUserSetting; // Set on-grid end SOC protection to user setting
         gridInjectionPowerLimit = GRID_INJECTION_POWER_LIMIT_OFF; // Do not inject power to grid
         onGridEndSOCProtection = 100.0; // Set on-grid end SOC protection to 100% to prevent battery from discharging to the grid
@@ -143,7 +144,7 @@ void updateInverterState() {
                soc > socDischargeToGridTreshold) { // SOC is above the push to grid threshold
         newMode = INVERTER_ECONOMIC_MODE;
         batteryMode = BATTERY_DISCHARGE_MODE; // Discharge to grid
-        batteryChargeDischargePowerLimit = BATTERY_POWER_LIMIT_MAX; // Limit discharging power to max allowed value
+        batteryChargeDischargePowerLimit = BATTERY_POWER_LIMIT_DISCHARGE_MAX; // Limit discharging power to max allowed value
         gridInjectionPowerLimit = GRID_INJECTION_POWER_LIMIT_MAX; // Allow maximum allowed power to be injected to grid
         onGridEndSOCProtection = onGridEndSOCProtectionUserSetting; // Set on-grid end SOC protection to user setting
         sprintf(inverterState, "Discharging to grid");
