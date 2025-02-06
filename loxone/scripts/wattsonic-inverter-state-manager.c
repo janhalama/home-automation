@@ -7,7 +7,7 @@
  - Input 3: Maximum spot price today
  - Input 4: Spot price threshold to charge from grid
  - Input 5: Spot price threshold to discharge battery to grid
- - Input 6: SOC treshold to discharge battery to grid, the battery will not discharge below this SOC
+ - Input 6: SOC treshold to discharge battery to grid, the battery will not discharge below this treshold
  - Input 7: Current inverter working mode
  - Input 8: Predicted PV production today
  - Input 9: Predicted PV production tomorrow
@@ -47,7 +47,8 @@ https://smarthome.exposed/wattsonic-hybrid-inverter-gen3-modbus-rtu-protocol
 #define MORNING_HOURS_TILL 12
 #define MORNING_HOURS_FROM 5
 #define BATTERY_POWER_LIMIT_DISCHARGE_MAX 80
-#define BATTERY_POWER_LIMIT_CHARGE_MAX 50
+// 30% power limit is recommended by the technician
+#define BATTERY_POWER_LIMIT_CHARGE_MAX 30
 #define BATTERY_POWER_LIMIT_OFF 0
 #define GRID_INJECTION_POWER_LIMIT_MAX 80
 #define GRID_INJECTION_POWER_LIMIT_OFF 0
@@ -135,9 +136,8 @@ void updateInverterState() {
         newMode = INVERTER_ECONOMIC_MODE;
         batteryMode = BATTERY_CHARGE_MODE; // Charge from grid
         batteryChargeDischargePowerLimit = BATTERY_POWER_LIMIT_CHARGE_MAX; // Limit battery charging power to max allowed value
-        onGridEndSOCProtection = onGridEndSOCProtectionUserSetting; // Set on-grid end SOC protection to user setting
         gridInjectionPowerLimit = GRID_INJECTION_POWER_LIMIT_OFF; // Do not inject power to grid
-        onGridEndSOCProtection = 100.0; // Set on-grid end SOC protection to 100% to prevent battery from discharging to the grid
+        onGridEndSOCProtection = soc; // Set on-grid end SOC protection to current SOC, to avoid charging with full power, which is not good for the battery life-expectancy
         sprintf(inverterState, "Charging from grid");
     } else if (fabs(maxSpotPrice - currentSpotPrice) <= 0.5 && // Spot price is close to max
                currentSpotPrice >= dischargeSpotPriceThreshold && // Spot price is above discharge threshold
@@ -179,7 +179,7 @@ void updateInverterState() {
     setoutput(OUTPUT_BATTERY_MODE, batteryMode);
     setoutput(OUTPUT_PERIOD_ENABLED, 1); // Period 1 is enabled
     setoutput(OUTPUT_BATTERY_CHARGE_BY, 1); // Battery charges by PV+Grid
-    setoutput(OUTPUT_BATTERY_CHARGE_DISCHARGE_LIMIT, batteryChargeDischargePowerLimit * 10); // Battery Charge&Discharge Power Limit
+    setoutput(OUTPUT_BATTERY_CHARGE_DISCHARGE_LIMIT, batteryChargeDischargePowerLimit * 10); // FIXME: This does not work, the limit is not applied
     setoutput(OUTPUT_GRID_INJECTION_LIMIT, gridInjectionPowerLimit * 10); // Set grid injection power limit based on current spot price
     setoutput(OUTPUT_ONGRID_SOC_PROTECTION, onGridEndSOCProtection); // Set on-grid end SOC protection
     setoutput(OUTPUT_MORNING_PUSH_TO_GRID_ENABLED, morningPushToGridEnabled); // Set morning push to grid enabled flag
@@ -191,7 +191,7 @@ void updateInverterState() {
     setoutputtext(TEXT_OUTPUT_INVERTER_STATE, inverterState);
 
     sprintf(inputs,
-            "Current spot price: %f\nMin spot price today: %f\nMax spot price today: %f\nCharge threshold: %f\nDischarge threshold: %f\nSOC discharge to grid threshold: %f\nCurrent inverter mode: %s\nPredicted PV today: %f\nPredicted PV tomorrow: %f\nPV production prediction threshold to discharge to grid or postpone morning production: %f\nSpot price threshold to push to grid: %f\nSOC: %f\nHour: %f\nBattery charge/discharge power limit: %d kW\nGrid injection power limit: %d kW\nOn-grid end SOC protection: %f\nOn-grid end SOC protection: %f\nOn-grid end SOC protection user setting: %f\nPV power now: %f W",
+            "Current spot price: %f\nMin spot price today: %f\nMax spot price today: %f\nCharge threshold: %f\nDischarge threshold: %f\nSOC discharge to grid threshold: %f\nCurrent inverter mode: %s\nPredicted PV today: %f\nPredicted PV tomorrow: %f\nPV production prediction threshold to discharge to grid or postpone morning production: %f\nSpot price threshold to push to grid: %f\nSOC: %f\nHour: %f\nBattery charge/discharge power limit: %d %%\nGrid injection power limit: %f kW\nOn-grid end SOC protection: %f\nOn-grid end SOC protection user setting: %f\nPV power now: %f W",
             currentSpotPrice,
             minSpotPrice,
             maxSpotPrice,
