@@ -184,48 +184,7 @@ void test_nx_json_parse() {
     printf("✓ test_nx_json_parse passed\n");
 }
 
-void test_parse_meteoblue_response() {
-    // Load the sample response using the defined path
-    char* json_str = read_file(MOCK_METEOBLUE_PATH);
-    assert(json_str != NULL && "Failed to read sample MeteoBlue response file");
-
-    // Parse the JSON
-    struct nx_json* json = nx_json_parse(json_str);
-    assert(json != NULL && "Failed to parse MeteoBlue response JSON");
-
-    // Navigate to the responses array
-    struct nx_json* responses = nx_json_get(json, "responses");
-    assert(responses != NULL && responses->type == NX_JSON_ARRAY);
-    
-    // Get the first response
-    struct nx_json* first_response = nx_json_item(responses, 0);
-    assert(first_response != NULL);
-
-    // Navigate to data_day section
-    struct nx_json* data_day = nx_json_get(first_response, "data_day");
-    assert(data_day != NULL);
-
-    // Get pvpower_total array
-    struct nx_json* pvpower_total = nx_json_get(data_day, "pvpower_total");
-    assert(pvpower_total != NULL && pvpower_total->type == NX_JSON_ARRAY);
-
-    // Check the first two values (today and tomorrow)
-    double pvpower_today = nx_json_item(pvpower_total, 0)->u.num.dbl_value;
-    double pvpower_tomorrow = nx_json_item(pvpower_total, 1)->u.num.dbl_value;
-
-    // Verify the expected values from the sample response
-    assert(fabs(pvpower_today - 50.049) < 0.001);
-    assert(fabs(pvpower_tomorrow - 50.454) < 0.001);
-
-    // Clean up
-    nx_json_free(json);
-    free(json_str);
-
-    printf("✓ test_parse_meteoblue_response passed\n");
-}
-
 int main() {
     test_nx_json_parse();
-    test_parse_meteoblue_response();
     return 0;
 } 

@@ -4,7 +4,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>
-#include <errno.h>
 #include "nx_json.h"
 #endif
 
@@ -86,7 +85,7 @@ void nx_json_free(struct nx_json *js) {
     if (js->type == NX_JSON_OBJECT || js->type == NX_JSON_ARRAY) {
         struct nx_json *p = js->u.children.first;
         struct nx_json *p1;
-        while (p) {
+        while (p != NULL) {
             p1 = p->next;
             nx_json_free(p);
             p = p1;
@@ -130,7 +129,7 @@ char *unescape_string(char *s, char **end) {
     char *p = s;
     char *d = s;
     char c;
-    char *ps;  // For error reporting
+    char *ps;  // Move declaration up
     int h1, h2, h3, h4;
     unsigned int codepoint;
     unsigned int codepoint2;
@@ -193,7 +192,7 @@ char *unescape_string(char *s, char **end) {
                     codepoint = 0x10000 + ((codepoint - 0xd800) << 10) + (codepoint2 - 0xdc00);
                 }
                 
-                if (!unicode_to_utf8(codepoint, d, &d)) {
+                if (unicode_to_utf8(codepoint, d, &d) == 0) {
                     nx_json_report_error("invalid codepoint", ps);
                     return 0;
                 }
@@ -214,14 +213,14 @@ char *unescape_string(char *s, char **end) {
 char *skip_block_comment(char *p) {
     // assume p[-2]=='/' && p[-1]=='*'
     char *ps = p - 2;
-    if (!*p) {
+    if (*p == '\0') {
         nx_json_report_error("endless comment", ps);
         return 0;
     }
 
     while (1) {
         p = strchr(p + 1, '/');
-        if (!p) {
+        if (p == NULL) {
             nx_json_report_error("endless comment", ps);
             return 0;
         }
@@ -243,7 +242,7 @@ char *parse_key(char **key, char *p) {
     while ((c = *p++)) {
         if (c == '"') {
             *key = unescape_string(p, &p);
-            if (!*key) return 0;
+            if (*key == NULL) return 0;
             
             // Skip whitespace after key
             while (*p && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')) {
@@ -261,14 +260,14 @@ char *parse_key(char **key, char *p) {
             if (*p == '/') { // line comment
                 char *ps = p - 1;
                 p = strchr(p + 1, '\n');
-                if (!p) {
+                if (p == NULL) {
                     nx_json_report_error("endless comment", ps);
                     return 0; // error
                 }
                 p++;
             } else if (*p == '*') { // block comment
                 p = skip_block_comment(p + 1);
-                if (!p) return 0;
+                if (p == NULL) return 0;
             } else {
                 nx_json_report_error("unexpected chars", p - 1);
                 return 0; // error
@@ -284,7 +283,10 @@ char *parse_key(char **key, char *p) {
 
 char *parse_value(struct nx_json *parent, char *key, char *p) {
     struct nx_json *js;
-
+    char *pe;  // Move declaration up from number parsing case
+    char *ps;  // Move declaration up from comment handling
+    char *new_key; // Move declaration up from object parsing
+    
     // Skip leading whitespace
     while (*p && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')) {
         p++;
@@ -304,24 +306,23 @@ char *parse_value(struct nx_json *parent, char *key, char *p) {
             break;
         case '{':
             js = create_json(NX_JSON_OBJECT, key, parent);
-            if (!js) {
+            if (js == NULL) {
                 return 0;
             }
             p++;
             while (1) {
-                char *new_key;
                 p = parse_key(&new_key, p);
-                if (!p) {
+                if (p == NULL) {
                     return 0;
                 }
                 if (*p == '}') {
                     return p + 1;
                 }
-                if (!new_key) {  // Handle empty object
+                if (new_key == NULL) {  // Handle empty object
                     continue;
                 }
                 p = parse_value(js, new_key, p);
-                if (!p) {
+                if (p == NULL) {
                     return 0;
                 }
             }
@@ -331,7 +332,7 @@ char *parse_value(struct nx_json *parent, char *key, char *p) {
             p++;
             while (1) {
                 p = parse_value(js, 0, p);
-                if (!p) return 0; // error
+                if (p == NULL) return 0; // error
                 if (*p == ']') return p + 1; // end of array
             }
             break;
@@ -341,7 +342,7 @@ char *parse_value(struct nx_json *parent, char *key, char *p) {
             p++;
             js = create_json(NX_JSON_STRING, key, parent);
             js->u.text_value = unescape_string(p, &p);
-            if (!js->u.text_value) return 0; // propagate error
+            if (js->u.text_value == NULL) return 0; // propagate error
             return p;
         case '-':
         case '0':
@@ -355,20 +356,19 @@ char *parse_value(struct nx_json *parent, char *key, char *p) {
         case '8':
         case '9': {
             js = create_json(NX_JSON_INTEGER, key, parent);
-            char *pe;
             if (*p == '-') {
                 js->u.num.value.s_value = (unsigned long) strtoll(p, &pe, 0);
             } else {
                 js->u.num.value.u_value = (unsigned long) strtoull(p, &pe, 0);
             }
-            if (pe == p || errno == ERANGE) {
+            if (pe == p) {
                 nx_json_report_error("invalid number", p);
                 return 0; // error
             }
             if (*pe == '.' || *pe == 'e' || *pe == 'E') { // double value
                 js->type = NX_JSON_DOUBLE;
                 js->u.num.dbl_value = strtod(p, &pe);
-                if (pe == p || errno == ERANGE) {
+                if (pe == p) {
                     nx_json_report_error("invalid number", p);
                     return 0; // error
                 }
@@ -406,16 +406,16 @@ char *parse_value(struct nx_json *parent, char *key, char *p) {
             return 0; // error
         case '/': // comment
             if (p[1] == '/') { // line comment
-                char *ps = p;
+                ps = p;  // Just assignment
                 p = strchr(p + 2, '\n');
-                if (!p) {
+                if (p == NULL) {
                     nx_json_report_error("endless comment", ps);
                     return 0; // error
                 }
                 p++;
             } else if (p[1] == '*') { // block comment
                 p = skip_block_comment(p + 2);
-                if (!p) return 0;
+                if (p == NULL) return 0;
             } else {
                 nx_json_report_error("unexpected chars", p);
                 return 0; // error
@@ -445,7 +445,7 @@ struct nx_json *nx_json_parse(char *text) {
     }
 
     // Create root node
-    static struct nx_json temp_parent;
+    struct nx_json temp_parent;
     temp_parent.type = NX_JSON_ROOT;
     temp_parent.key = NULL;
     temp_parent.next = NULL;
