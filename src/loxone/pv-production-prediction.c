@@ -1,11 +1,10 @@
 /* 
-Loxone programming block for fetching PV production predictions from Meteoblue API and updating the virtual inputs.
+Loxone programming block for fetching PV production predictions from Forecast.solar API and updating the virtual inputs.
 
-The script should not bet triggered more than once a day to avoid unnecessary API calls and stay withing the free tier limits.
+The script should not bet triggered more than once a day to avoid unnecessary API calls and stay within the free tier limits.
 
 Inputs:
 - Input 1: Trigger event to fetch the data
-- Text Input 1: MeteoBlue API key
 
 Outputs:
 - Output 1: PV production prediction for today
@@ -13,18 +12,19 @@ Outputs:
 */ 
 
 // Define all required constants
-#define SERVER_ADDRESS "my.meteoblue.com"
- //TODO: Following constants should be replaced with user inputs
-#define LATITUDE "50.6920272"
-#define LONGITUDE "15.2203211"
-#define KWP "8"
-#define SLOPE "45"
-#define FACING "100"
-#define POWER_EFFICIENCY "0.9"
-#define TRACKER "1"
+#define SERVER_ADDRESS "api.forecast.solar"
 
-// API endpoint path
-#define URL_PATH_FORMAT "/packages/pvpro-1h_pvpro-day?lat=%s&lon=%s&kwp=%s&slope=%s&facing=%s&power_efficiency=%s&tracker=%s&apikey=%s"
+// Panel configuration
+#define LATITUDE "50.6920036"
+#define LONGITUDE "15.2203556"
+#define SLOPE "45"
+#define EAST_AZIMUTH "-63"
+#define EAST_KWP "5500"
+#define WEST_AZIMUTH "113"
+#define WEST_KWP "4500"
+
+// API endpoint path format (same for both orientations)
+#define URL_PATH_FORMAT "/estimate/watthours/day/%s/%s/%s/%s/%s?time=%s"
 
 // Output indexes
 #define OUTPUT_PV_PRODUCTION_TODAY 0
@@ -32,79 +32,79 @@ Outputs:
 
 // Virtual input connection addresses
 #define VI_PV_PRODUCTION_TODAY "VI9"
-#define VI_PV_PRODUCTION_TOMMORROW "VI10"
+#define VI_PV_PRODUCTION_TOMORROW "VI10"
 
-#define PREDICTION_COEFICIENT 0.6 // The prediction is consistently off by 60%
-
-char debug[1024];
+// Define debug output indexes
+#define DEBUG_OUTPUT_RESPONSE 0
+#define DEBUG_OUTPUT_URL 1
+#define DEBUG_OUTPUT_DEBUG 2
 
 int nEvents;
-char url[512];  // Buffer for the formatted API request URL
-char* apiKey;
-char* response;
-char *start, *end;
-float pvPowerToday, pvPowerTomorrow;
+char debug[1024];
+char urlEast[512];  // Buffer for east panels API URL
+char urlWest[512];  // Buffer for west panels API URL
+char* responseEast;
+char* responseWest;
 int initialFetchDone = 0;
-
 
 while (TRUE) {
     nEvents = getinputevent();
     if ((nEvents & 0xFF) || !initialFetchDone) {
-        apiKey = getinputtext(0);
-        if (apiKey == NULL) {
-            setoutputtext(2, "No API key provided");
-            sleep(1000);
-            continue;
-        }
-
-        sprintf(url, URL_PATH_FORMAT, LATITUDE, LONGITUDE, KWP, SLOPE, FACING, POWER_EFFICIENCY, TRACKER, apiKey);
+        // Get current date in YYYY-MM-DD format using Loxone time functions
+        char todayDate[11], tomorrowDate[11];
+        unsigned int currentTime = getcurrenttime();
+        unsigned int tomorrowTime = currentTime + (24 * 60 * 60); // Add 24 hours in seconds
         
-        // Fetch data using the formatted URL
-        response = httpget(SERVER_ADDRESS, url);
+        // Format today's date (using local time)
+        sprintf(todayDate, "%04d-%02d-%02d", 
+            getyear(currentTime, 1),
+            getmonth(currentTime, 1),
+            getday(currentTime, 1));
+        
+        // Format tomorrow's date (using local time)
+        sprintf(tomorrowDate, "%04d-%02d-%02d", 
+            getyear(tomorrowTime, 1),
+            getmonth(tomorrowTime, 1),
+            getday(tomorrowTime, 1));
 
-        if (response != NULL) {
-            setoutputtext(1, url);
-            setoutputtext(2, response);
-            struct nx_json *json = nx_json_parse(response);
-            if (json != NULL) {
-                if (json->type == NX_JSON_OBJECT) {
-                    struct nx_json *pvPowerTotalJson = nx_json_get(json, "pvpower_total");
-                    if (pvPowerTotalJson != NULL && pvPowerTotalJson->type == NX_JSON_ARRAY) {
-                        struct nx_json *today = nx_json_item(pvPowerTotalJson, 0);
-                        struct nx_json *tomorrow = nx_json_item(pvPowerTotalJson, 1);
-                        
-                        if (today != NULL && tomorrow != NULL) {
-                            // Set initial values to 0
-                            pvPowerToday = 0;
-                            pvPowerTomorrow = 0;
-                            
-                            // Only update if we have valid number types
-                            if ((today->type == NX_JSON_DOUBLE || today->type == NX_JSON_INTEGER) &&
-                                (tomorrow->type == NX_JSON_DOUBLE || tomorrow->type == NX_JSON_INTEGER)) {
-                                
-                                pvPowerToday = today->u.num.dbl_value;
-                                pvPowerTomorrow = tomorrow->u.num.dbl_value;
-                                
-                                // Ensure values are non-negative
-                                if (pvPowerToday >= 0 && pvPowerTomorrow >= 0) {
-                                    float adjustedToday = pvPowerToday * PREDICTION_COEFICIENT;
-                                    float adjustedTomorrow = pvPowerTomorrow * PREDICTION_COEFICIENT;
-                                    
-                                    setoutput(OUTPUT_PV_PRODUCTION_TODAY, adjustedToday);
-                                    setio(VI_PV_PRODUCTION_TODAY, adjustedToday);
-                                    
-                                    setoutput(OUTPUT_PV_PRODUCTION_TOMORROW, adjustedTomorrow);
-                                    setio(VI_PV_PRODUCTION_TOMMORROW, adjustedTomorrow);
-                                    
-                                    initialFetchDone = 1;
-                                }
-                            }
-                        }
-                    }
-                    
-                }
-                nx_json_free(json);
-            }
+        // Format URLs for both panel orientations
+        sprintf(urlEast, URL_PATH_FORMAT, LATITUDE, LONGITUDE, SLOPE, EAST_AZIMUTH, EAST_KWP, tomorrowDate);
+        sprintf(urlWest, URL_PATH_FORMAT, LATITUDE, LONGITUDE, SLOPE, WEST_AZIMUTH, WEST_KWP, tomorrowDate);
+        
+        // Log URLs
+        sprintf(debug, "East URL: %s\nWest URL: %s", urlEast, urlWest);
+        setoutputtext(DEBUG_OUTPUT_URL, debug);
+
+        // Fetch and process east panels data
+        //responseEast = httpget(SERVER_ADDRESS, urlEast);
+        responseEast = "{\"result\":{\"2025-02-27\":4674362,\"2025-02-28\":4774208},\"message\":{\"code\":0,\"type\":\"success\",\"text\":\"\",\"pid\":\"i6bY1h23\",\"info\":{\"latitude\":50.692,\"longitude\":15.2204,\"distance\":0,\"place\":\"76, 468 21 Krásná, Czechia\",\"timezone\":\"Europe/Prague\",\"time\":\"2025-02-27T08:15:11+01:00\",\"time_utc\":\"2025-02-27T07:15:11+00:00\"},\"ratelimit\":{\"zone\":\"IP 94.127.131.198\",\"period\":3600,\"limit\":12,\"remaining\":11}}}";
+        if (responseEast != NULL) {
+            // Log response (show body only)
+            char* jsonBody = skipHeaders(responseEast);
+            sprintf(debug, "East response: %s", jsonBody);
+            setoutputtext(DEBUG_OUTPUT_RESPONSE, debug);
+            
+            // Parse east production values
+            struct DailyProduction eastProduction = parseDailyProduction(jsonBody, todayDate, tomorrowDate);
+
+            // Free the east response
+            free(responseEast);
+            
+            // Calculate total production (convert to kWh)
+            /*float totalToday = eastProduction.today / 1000.0;
+            float totalTomorrow = eastProduction.tomorrow / 1000.0;
+
+            // Update outputs and virtual inputs
+            setoutput(OUTPUT_PV_PRODUCTION_TODAY, totalToday);
+            setio(VI_PV_PRODUCTION_TODAY, totalToday);
+            
+            setoutput(OUTPUT_PV_PRODUCTION_TOMORROW, totalTomorrow);
+            setio(VI_PV_PRODUCTION_TOMORROW, totalTomorrow);*/
+            
+            initialFetchDone = 1;
+        } else {
+            sprintf(debug, "Failed to fetch east panel data");
+            setoutputtext(DEBUG_OUTPUT_DEBUG, debug);
         }
     }
     sleep(1000);
