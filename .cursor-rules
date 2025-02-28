@@ -1,0 +1,5 @@
+PICOC is a programming language for the Loxone V4 system with following limitations:
+- const keyword is not supported
+- ! operatorcan not be used to check for NULL, use == NULL instead
+- avoid using ternary operator
+- aggregate initialization is not supported, for example: struct DailyProduction production = {0, 0}; is not supported, use production.today = 0; production.tomorrow = 0; instead
