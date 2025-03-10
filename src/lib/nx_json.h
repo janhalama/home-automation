@@ -47,12 +47,10 @@ struct nx_json *nx_json_parse(char *text);
 struct nx_json *nx_json_get(struct nx_json *json, char *key);
 struct nx_json *nx_json_item(struct nx_json *json, int idx);
 void nx_json_free(struct nx_json *js);
+void nx_json_dealloc(struct nx_json* js);
 
 // Error reporting function
 void nx_json_report_error(char *msg, char *p);
 
-// Add function declarations instead
-struct nx_json* nx_json_alloc(void);
-void nx_json_dealloc(struct nx_json* js);
 
 #endif // NX_JSON_H
