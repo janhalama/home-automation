@@ -3,6 +3,8 @@ PICOC is a programming language for the Loxone V4 system with following limitati
 - ! operatorcan not be used to check for NULL, use == NULL instead
 - avoid using ternary operator
 - aggregate initialization is not supported, for example: struct DailyProduction production = {0, 0}; is not supported, use production.today = 0; production.tomorrow = 0; instead
+- use only functions listed in the documentation bellow
+- this init is not allowed char jsonStr[1024] = {0};
 
 PICOC documentation, taken from http://updatefiles.loxone.com/KnowledgeBase/Online/Common/Documents/CustomScriptProgramming.pdf
 
