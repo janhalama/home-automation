@@ -67,7 +67,7 @@ while (TRUE) {
             getmonth(tomorrowTime, 1),
             getday(tomorrowTime, 1));
 
-        // Format URLs for both panel orientations
+       // Format URLs for both panel orientations
         sprintf(urlEast, URL_PATH_FORMAT, LATITUDE, LONGITUDE, SLOPE, EAST_AZIMUTH, EAST_KWP, tomorrowDate);
         sprintf(urlWest, URL_PATH_FORMAT, LATITUDE, LONGITUDE, SLOPE, WEST_AZIMUTH, WEST_KWP, tomorrowDate);
         
@@ -76,36 +76,59 @@ while (TRUE) {
         setoutputtext(DEBUG_OUTPUT_URL, debug);
 
         // Fetch and process east panels data
-        //responseEast = httpget(SERVER_ADDRESS, urlEast);
-        responseEast = "{\"result\":{\"2025-02-27\":4674362,\"2025-02-28\":4774208},\"message\":{\"code\":0,\"type\":\"success\",\"text\":\"\",\"pid\":\"i6bY1h23\",\"info\":{\"latitude\":50.692,\"longitude\":15.2204,\"distance\":0,\"place\":\"76, 468 21 Krásná, Czechia\",\"timezone\":\"Europe/Prague\",\"time\":\"2025-02-27T08:15:11+01:00\",\"time_utc\":\"2025-02-27T07:15:11+00:00\"},\"ratelimit\":{\"zone\":\"IP 94.127.131.198\",\"period\":3600,\"limit\":12,\"remaining\":11}}}";
+        struct DailyProduction eastProduction;
+        char* jsonBody;
+        responseEast = httpget(SERVER_ADDRESS, urlEast);
         if (responseEast != NULL) {
             // Log response (show body only)
-            char* jsonBody = skipHeaders(responseEast);
+            jsonBody = skipHeaders(responseEast);
             sprintf(debug, "East response: %s", jsonBody);
             setoutputtext(DEBUG_OUTPUT_RESPONSE, debug);
             
             // Parse east production values
-            struct DailyProduction eastProduction = parseDailyProduction(jsonBody, todayDate, tomorrowDate);
+            eastProduction = parseDailyProduction(jsonBody, todayDate, tomorrowDate);
 
             // Free the east response
             free(responseEast);
-            
-            // Calculate total production (convert to kWh)
-            /*float totalToday = eastProduction.today / 1000.0;
-            float totalTomorrow = eastProduction.tomorrow / 1000.0;
-
-            // Update outputs and virtual inputs
-            setoutput(OUTPUT_PV_PRODUCTION_TODAY, totalToday);
-            setio(VI_PV_PRODUCTION_TODAY, totalToday);
-            
-            setoutput(OUTPUT_PV_PRODUCTION_TOMORROW, totalTomorrow);
-            setio(VI_PV_PRODUCTION_TOMORROW, totalTomorrow);*/
-            
-            initialFetchDone = 1;
         } else {
             sprintf(debug, "Failed to fetch east panel data");
             setoutputtext(DEBUG_OUTPUT_DEBUG, debug);
         }
+
+        // Fetch and process west panels data
+        struct DailyProduction westProduction;
+        responseWest = httpget(SERVER_ADDRESS, urlWest);
+        if (responseWest != NULL) {
+            // Log response (show body only)
+            jsonBody = skipHeaders(responseWest);
+            sprintf(debug, "West response: %s", jsonBody);
+            setoutputtext(DEBUG_OUTPUT_RESPONSE, debug);    
+            
+            // Parse west production values
+            westProduction = parseDailyProduction(jsonBody, todayDate, tomorrowDate);
+
+            // Free the west response
+            free(responseWest);
+        } else {
+            sprintf(debug, "Failed to fetch east panel data");
+            setoutputtext(DEBUG_OUTPUT_DEBUG, debug);
+        }
+            
+        // Calculate total production (convert to kWh)
+        float totalToday = (eastProduction.today + westProduction.today) / 1000.0;
+        float totalTomorrow = (eastProduction.tomorrow + westProduction.tomorrow) / 1000.0;
+
+        sprintf(debug, "Total production today: %f, tomorrow: %f", totalToday, totalTomorrow);
+        setoutputtext(DEBUG_OUTPUT_DEBUG, debug);
+
+        // Update outputs and virtual inputs
+        setoutput(OUTPUT_PV_PRODUCTION_TODAY, totalToday);
+        setio(VI_PV_PRODUCTION_TODAY, totalToday);
+        
+        setoutput(OUTPUT_PV_PRODUCTION_TOMORROW, totalTomorrow);
+        setio(VI_PV_PRODUCTION_TOMORROW, totalTomorrow);
+        
+        initialFetchDone = 1;
     }
     sleep(1000);
 }

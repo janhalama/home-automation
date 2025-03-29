@@ -72,8 +72,8 @@ void test_parse_daily_production() {
         (char*)TODAY, 
         (char*)TOMORROW
     );
-    assert(prod2.today == 4674362);
-    assert(prod2.tomorrow == 4774208);
+    assert(prod2.today == 4674.362);
+    assert(prod2.tomorrow == 4774.208);
     printf("✓ Successfully parsed json response with line breaks\n");
     
     free(json_response);
@@ -81,8 +81,8 @@ void test_parse_daily_production() {
     // Test with one-line response
     char* json_response_oneline = read_file(MOCK_RESPONSE_BODY_ONELINE_FILE);
     struct DailyProduction prod_oneline = parseDailyProduction(json_response_oneline, (char*)TODAY, (char*)TOMORROW);
-    assert(prod_oneline.today == 4674362);
-    assert(prod_oneline.tomorrow == 4774208);
+    assert(prod_oneline.today == 4674.362);
+    assert(prod_oneline.tomorrow == 4774.208);
     printf("✓ Successfully parsed json response without line breaks\n");
     
     // Test with NULL input

@@ -26,13 +26,7 @@ struct nx_json {
     char *key;
     union json_value {
         char *text_value;
-        struct number_value {
-            union integer_value {
-                unsigned long u_value;
-                unsigned long s_value;
-            } value;
-            double dbl_value;
-        } num;
+        double number_value;
         struct children_value {
             int length;
             struct nx_json *first;
@@ -46,8 +40,8 @@ struct nx_json {
 struct nx_json *nx_json_parse(char *text);
 struct nx_json *nx_json_get(struct nx_json *json, char *key);
 struct nx_json *nx_json_item(struct nx_json *json, int idx);
-void nx_json_free(struct nx_json *js);
 void nx_json_dealloc(struct nx_json* js);
+void nx_json_reset();
 
 // Error reporting function
 void nx_json_report_error(char *msg, char *p);

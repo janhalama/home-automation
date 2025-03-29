@@ -3,8 +3,8 @@
 
 // Structure to hold production values
 struct DailyProduction {
-    int today;
-    int tomorrow;
+    double today;
+    double tomorrow;
 };
 
 // Function to skip HTTP headers and return pointer to response body
