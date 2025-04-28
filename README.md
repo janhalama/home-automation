@@ -93,30 +93,13 @@ This project includes a suite of tests to verify the functionality of its compon
 
 ### Running Tests
 
-1. **Run all tests:**
+**Run specific test files:**
     ```bash
-    # Ensure you're in the build directory
-    cd build  # if not already in build directory
-    
-    # Run tests using the generated Makefile
-    make test
-    
-    # Or using CTest
-    ctest
+    cd build
+    ./test_nx_json
+    ./test_nx_json_internal
+    ./test_forecast_solar
     ```
-
-2. **Run specific test files:**
-    ```bash
-    # Run specific tests using CTest
-    cd build  # if not already in build directory
-    ctest -R forecast_solar.test
-    ```
-
-### Available Tests
-
-- **forecast_solar.test.c**: Tests for the solar forecast functionality
-- **nx_json.test.c**: Tests for the JSON parsing library
-- **nx_json.internal.test.c**: Internal tests for the JSON parsing library
 
 ## License
 
