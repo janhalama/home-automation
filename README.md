@@ -9,6 +9,7 @@
 - [Installation](#installation)
 - [Configuration](#configuration)
 - [Usage](#usage)
+- [Development and Testing](#development-and-testing)
 - [Contributing](#contributing)
 - [License](#license)
 - [Contact](#contact)
@@ -20,13 +21,13 @@ The energy management system key components includes, Loxone charging station, p
 ## Features
 
 ### EV Eco Power Calculation
-This script calculates the eco power for charging an electric vehicle (EV) based on solar power readings and user configurations. It decides the power to charge the car at, depending on the state of charge (SOC) of the battery and whether the car is already charging. Script [location](/loxone/scripts/ev-eco-power-calculation.c).
+This script calculates the eco power for charging an electric vehicle (EV) based on solar power readings and user configurations. It decides the power to charge the car at, depending on the state of charge (SOC) of the battery and whether the car is already charging. Script [location](src/loxone/ev-eco-power-calculation.c).
 
 ### PV Production Prediction
-This script predicts photovoltaic (PV) production. It involves fetching weather data from MeteoBlue API to estimate future solar power production. Script [location](/loxone/scripts/pv-production-prediction.c).
+This script predicts photovoltaic (PV) production. It involves fetching weather data from forecast.solar API to estimate future solar power production. The script is bundled using make Script and once bundled, it is located in [location](build/pv-production-prediction.bundled.c).
 
 ### Wattsonic Inverter State Manager
-This script manages the state of an inverter based on various inputs such as current and predicted spot prices, SOC, and PV production predictions. It determines whether the inverter should be in economic mode, general mode, or UPS mode and sets limits on battery charge/discharge and grid injection power. Script [location](/loxone/scripts/wattsonic-inverter-state-manager.c).
+This script manages the state of an inverter based on various inputs such as current and predicted spot prices, SOC, and PV production predictions. It determines whether the inverter should be in economic mode, general mode, or UPS mode and sets limits on battery charge/discharge and grid injection power. Script [location](/src/loxone/wattsonic-inverter-state-manager.c).
 
 ## Hardware Requirements
 
@@ -38,7 +39,6 @@ This script manages the state of an inverter based on various inputs such as cur
 ## Software Requirements
 
 - Loxone Config software
-- MeteoBlue account (free tier is sufficient) and API key for weather data retrieval
 
 ## Installation
 
@@ -65,19 +65,41 @@ This script manages the state of an inverter based on various inputs such as cur
 1. **Start the System:**
     - Deploy the configuration to the Loxone Miniserver and enjoy.
 
-## Contributing
+## Development and Testing
 
-Contributions to enhance the functionality of these scripts are welcome. Follow these steps to contribute:
+This project includes a suite of tests to verify the functionality of its components.
 
-1. Fork the repository.
-2. Create a new branch (`git checkout -b feature/xyz`).
-3. Commit your changes (`git commit -am 'feat: Add feature xyz'`).
-4. Push to the branch (`git push origin feature-xyz`).
-5. Create a new Pull Request.
+### Prerequisites
 
-Please ensure your contributions adhere to the following guidelines:
-- Proper documentation of the added features.
-- Compatibility with the Loxone system.
+- C compiler (GCC or Clang recommended)
+- CMake (version 3.10 or higher recommended)
+
+### Building the Project
+
+1. **Navigate to the project directory:**
+    ```bash
+    cd home-automation
+    ```
+
+2. **Build using CMake:**
+    ```bash
+    # Generate the build system
+    mkdir -p build && cd build
+    cmake ..
+    
+    # Build using the generated Makefile
+    make
+    ```
+
+### Running Tests
+
+**Run specific test files:**
+    ```bash
+    cd build
+    ./test_nx_json
+    ./test_nx_json_internal
+    ./test_forecast_solar
+    ```
 
 ## License
 

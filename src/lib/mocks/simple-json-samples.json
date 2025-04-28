@@ -1,0 +1,43 @@
+{
+    "scalar_values": {
+        "integer": 42,
+        "float": 3.14159,
+        "string": "Hello, World!",
+        "boolean_true": true,
+        "boolean_false": false,
+        "null_value": null
+    },
+    "simple_object": {
+        "name": "Test Object",
+        "value": 123,
+        "nested_object": {
+            "nested_key": "nested_value"
+        }
+    },
+    "simple_array": [
+        1,
+        2,
+        3,
+        4,
+        5
+    ],
+    "array_of_objects": [
+        {
+            "id": 1,
+            "name": "Object 1"
+        },
+        {
+            "id": 2,
+            "name": "Object 2"
+        }
+    ],
+    "mixed_array": [
+        "string",
+        100,
+        true,
+        null,
+        {
+            "key": "value"
+        }
+    ]
+} 
