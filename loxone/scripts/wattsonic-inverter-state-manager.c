@@ -182,14 +182,9 @@ void updateInverterState() {
 
         // Fix for battery full + low spot price scenario
         // Always enable grid injection when battery is nearly full to prevent PV throttling
-        if(currentSpotPrice > spotPriceTreshold || soc >= 95.0) {
+        if(currentSpotPrice > spotPriceTreshold) {
             gridInjectionPowerLimit = GRID_INJECTION_POWER_LIMIT_MAX; // Allow maximum allowed power to be injected to grid
-            
-            if(soc >= 95.0 && currentSpotPrice <= spotPriceTreshold) {
-                sprintf(inverterState, "Grid injection enabled (battery nearly full)");
-            } else {
-                sprintf(inverterState, "Grid injection enabled");
-            }
+            sprintf(inverterState, "Grid injection enabled");
         } else {
             gridInjectionPowerLimit = GRID_INJECTION_POWER_LIMIT_OFF; // Do not inject power to grid
             sprintf(inverterState, "Grid injection disabled");
