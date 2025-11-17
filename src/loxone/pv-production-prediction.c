@@ -11,6 +11,8 @@ Outputs:
 - Output 2: PV production prediction for tomorrow
 */ 
 
+#include "../lib/forecast_solar.h"
+
 // Define all required constants
 #define SERVER_ADDRESS "api.forecast.solar"
 

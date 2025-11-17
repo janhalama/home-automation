@@ -63,15 +63,18 @@ void controlHeating() {
     int sufficientPVPowerNow = pwPowerNow > PV_POWER_THRESHOLD_IN_KW;
     int sufficientPVProductionToday = predictedPVToday > PV_LOW_PRODUCTION_THRESHOLD_IN_KW;
     int sufficientPVProductionTomorrow = predictedPVTomorrow > PV_LOW_PRODUCTION_THRESHOLD_IN_KW;
+    int isDayMode = 0;
     
     // TODO: use better algorithm to determine that the hour is during the day (sunrise to sunset)
     if(hourNow >= 6 && hourNow < 21) {
         // During the day
+        isDayMode = 1;
         canCharge = 
             (!sufficientPVProductionToday && spotPriceIsVeryLow) ||
             (sufficientPVPowerNow && spotPriceIsVeryLow);
     } else {
         // During the night
+        isDayMode = 0;
         canCharge = !sufficientPVProductionTomorrow && spotPriceIsVeryLow;
     }
 
@@ -79,12 +82,16 @@ void controlHeating() {
     setoutput(OUTPUT_HEATING_ON_OFF, (priorityChargingEnabled || canCharge) && temperatureBelowTreshold && !morningPushToGridEnabled);
 
     sprintf(inputs,
-            "Inputs:\n - Water tank temperature below treshold: %d\n - Spot price is very low: %d\n - Predicted PV production for tomorrow: %f\n - Predicted PV production for today: %f\n - Current PV production: %f\n - Can charge: %d\n - Morning push to grid enabled: %d",
+            "Inputs:\n - Water tank temperature below treshold: %d\n - Spot price is very low: %d\n - Predicted PV production for tomorrow: %f\n - Predicted PV production for today: %f\n - Current PV production: %f\n - Current hour: %d\n - Is day mode: %d\n - Predicted PV tomorrow value: %f\n - Sufficient PV production tomorrow: %d\n - Can charge: %d\n - Morning push to grid enabled: %d",
             temperatureBelowTreshold,
             spotPriceIsVeryLow,
             predictedPVTomorrow,
             predictedPVToday,
             pwPowerNow,
+            hourNow,
+            isDayMode,
+            predictedPVTomorrow,
+            sufficientPVProductionTomorrow,
             canCharge,
             morningPushToGridEnabled);
 
