@@ -143,7 +143,8 @@ void updateInverterState() {
         excessEnergyAvailable = 1;
         
         sprintf(inverterState, "Charging from grid");
-    } else if (fabs(maxSpotPrice - currentSpotPrice) <= 0.5 && // Spot price is close to max
+    } else if (currentSpotPrice > spotPriceTreshold && // Spot price must allow grid injection
+               fabs(maxSpotPrice - currentSpotPrice) <= 0.5 && // Spot price is close to max
                currentSpotPrice >= dischargeSpotPriceThreshold && // Spot price is above discharge threshold
                soc > socDischargeToGridTreshold) { // SOC is above the push to grid threshold
         newMode = INVERTER_ECONOMIC_MODE;

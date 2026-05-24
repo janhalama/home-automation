@@ -64,3 +64,8 @@ target_compile_definitions(test_forecast_solar PRIVATE
     MOCK_RESPONSE_FILE="${CMAKE_SOURCE_DIR}/src/lib/mocks/forecast_solar_response.txt"
     MOCK_RESPONSE_BODY_FILE="${CMAKE_SOURCE_DIR}/src/lib/mocks/forecast_solar_response_body.json"
     MOCK_RESPONSE_BODY_ONELINE_FILE="${CMAKE_SOURCE_DIR}/src/lib/mocks/forecast_solar_response_body_oneline.json")
+
+# Add the regression test for the Wattsonic inverter state manager
+add_executable(test_wattsonic_inverter_state_manager src/lib/wattsonic_inverter_state_manager.test.c)
+target_compile_definitions(test_wattsonic_inverter_state_manager PRIVATE
+    WATTSONIC_STATE_MANAGER_PATH="${CMAKE_SOURCE_DIR}/src/loxone/wattsonic-inverter-state-manager.c")
