@@ -19,8 +19,8 @@ Outputs:
 #define SERVER_ADDRESS "home-automation-home-automation-api.vercel.app"
 
 // Input indexes
-#define INPUT_TRIGGER  0
-#define INPUT_API_KEY  1
+#define INPUT_TRIGGER  0  // I1 — numeric trigger event
+#define INPUT_API_KEY  0  // T1 — first text input (separate index space from numeric inputs)
 
 // Panel configuration
 #define LATITUDE     "50.6920036"
