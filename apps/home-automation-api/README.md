@@ -72,9 +72,7 @@ pnpm --filter home-automation-api typecheck
 6. Add environment variables in the Vercel dashboard (`HOME_AUTOMATION_API_KEY` is required).
 7. Deploy.
 
-Do not add a `functions` pattern for `src/index.ts` in `vercel.json`. That pattern only applies to files under the `api/` directory and will fail deployment.
-
-The serverless entrypoint is `src/index.ts`, which forwards requests to the Fastify app in `src/app.ts`.
+The serverless entrypoint is `src/app.ts`, which default-exports the Vercel handler and builds the Fastify app from `src/create-app.ts`.
 
 ## Loxone Integration
 

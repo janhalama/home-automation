@@ -4,7 +4,7 @@ It checks auth, query validation, success formatting, and upstream error mapping
 */
 
 import { describe, expect, it } from "vitest";
-import { createApp } from "../src/app.js";
+import { createApp } from "../src/create-app.js";
 
 function createQueryString(): string {
   return [
@@ -19,6 +19,29 @@ function createQueryString(): string {
 }
 
 describe("GET /api/pv/production-prediction", () => {
+  it("returns 503 when server API key is not configured", async () => {
+    const app = createApp({
+      apiKey: "",
+      cacheTtlSeconds: 3600,
+      timeoutMs: 8000,
+      forecastSolarApiKey: "",
+      fetchImpl: async () => {
+        throw new Error("fetch should not be called");
+      }
+    });
+
+    const response = await app.inject({
+      method: "GET",
+      url: `/api/pv/production-prediction?${createQueryString()}`,
+      headers: {
+        "x-api-key": "secret-key"
+      }
+    });
+
+    expect(response.statusCode).toBe(503);
+    expect(response.body).toContain("error=server_misconfigured");
+  });
+
   it("returns 401 when API key is missing", async () => {
     const app = createApp({
       apiKey: "secret-key",

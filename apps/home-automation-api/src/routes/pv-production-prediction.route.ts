@@ -73,6 +73,14 @@ export function registerPvProductionPredictionRoute(
       const headerApiKey = request.headers["x-api-key"];
       const queryApiKey = typeof query.apiKey === "string" ? query.apiKey : undefined;
 
+      if (!deps.apiKey) {
+        reply
+          .status(503)
+          .type("text/plain; charset=utf-8")
+          .send(formatErrorResponse("server_misconfigured"));
+        return;
+      }
+
       if (
         !isAuthorized(
           deps.apiKey,

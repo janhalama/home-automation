@@ -10,11 +10,9 @@ export type EnvironmentConfig = {
   cacheTtlSeconds: number;
 };
 
-/* Read and validate required API key configuration. */
+/* Read API key configuration without crashing serverless startup. */
 function readApiKey(value: string | undefined): string {
-  if (!value)
-    throw new Error("Missing required environment variable: HOME_AUTOMATION_API_KEY");
-  return value;
+  return value?.trim() ?? "";
 }
 
 /* Parse a positive integer configuration value with fallback. */
