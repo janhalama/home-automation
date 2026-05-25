@@ -1,10 +1,4 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "installCommand": "cd ../.. && pnpm install",
-  "buildCommand": "pnpm build",
-  "functions": {
-    "src/index.ts": {
-      "maxDuration": 30
-    }
-  }
+  "installCommand": "cd ../.. && pnpm install"
 }

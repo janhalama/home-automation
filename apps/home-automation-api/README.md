@@ -66,12 +66,15 @@ pnpm --filter home-automation-api typecheck
 
 1. Create a Vercel project from this repository.
 2. Set **Root Directory** to `apps/home-automation-api`.
-3. Set **Install Command** to `cd ../.. && pnpm install`.
-4. Set **Build Command** to `pnpm build`.
-5. Add the environment variables above in the Vercel dashboard.
-6. Deploy.
+3. Leave the default **Framework Preset** as Vercel auto-detected Fastify/Node, or set it to **Other**.
+4. Set **Install Command** to `cd ../.. && pnpm install`.
+5. Leave **Build Command** empty unless you want a typecheck step. Vercel bundles `src/index.ts` directly for the serverless function.
+6. Add environment variables in the Vercel dashboard (`HOME_AUTOMATION_API_KEY` is required).
+7. Deploy.
 
-The serverless entrypoint is `src/index.ts`, which forwards requests to the Fastify app built in `src/app.ts`.
+Do not add a `functions` pattern for `src/index.ts` in `vercel.json`. That pattern only applies to files under the `api/` directory and will fail deployment.
+
+The serverless entrypoint is `src/index.ts`, which forwards requests to the Fastify app in `src/app.ts`.
 
 ## Loxone Integration
 
