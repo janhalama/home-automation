@@ -15,8 +15,8 @@ Outputs:
 - Output 2: PV production prediction for tomorrow (kWh)
 */
 
-// API connection — port 443 tells Loxone PicoC to use HTTPS
-#define SERVER_ADDRESS "home-automation-home-automation-api.vercel.app:443"
+// API connection — https:// prefix enables TLS on Loxone PicoC
+#define SERVER_ADDRESS "https://home-automation-home-automation-api.vercel.app"
 
 // Input indexes
 #define INPUT_TRIGGER  0  // I1 — numeric trigger event
