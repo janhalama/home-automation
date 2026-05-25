@@ -8,6 +8,7 @@ forecast.solar free-tier rate limits.
 
 Inputs:
 - Input 1: Trigger event to fetch the data
+- Input 2: API key (text) — value of HOME_AUTOMATION_API_KEY set in Vercel
 
 Outputs:
 - Output 1: PV production prediction for today (kWh)
@@ -16,7 +17,10 @@ Outputs:
 
 // API connection
 #define SERVER_ADDRESS "home-automation-home-automation-api.vercel.app"
-#define API_KEY        "change-me"
+
+// Input indexes
+#define INPUT_TRIGGER  0
+#define INPUT_API_KEY  1
 
 // Panel configuration
 #define LATITUDE     "50.6920036"
@@ -83,6 +87,7 @@ int nEvents;
 int initialFetchDone = 0;
 char url[512];
 char debug[256];
+char* apiKey;
 char* response;
 char* body;
 float todayKwh;
@@ -91,11 +96,13 @@ float tomorrowKwh;
 while (TRUE) {
     nEvents = getinputevent();
     if ((nEvents & 0xFF) || !initialFetchDone) {
+        apiKey = getinputtext(INPUT_API_KEY);
+
         sprintf(url, URL_FORMAT,
             LATITUDE, LONGITUDE, SLOPE,
             EAST_AZIMUTH, EAST_KWP,
             WEST_AZIMUTH, WEST_KWP,
-            API_KEY);
+            apiKey);
 
         setoutputtext(DEBUG_URL, url);
 
