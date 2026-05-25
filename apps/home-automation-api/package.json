@@ -24,7 +24,7 @@
     "@types/node": "^22.15.30",
     "tsx": "^4.20.3",
     "typebox": "^1.0.13",
-    "typescript": "^5.8.3",
+    "typescript": "5.9.3",
     "vitest": "^3.2.4"
   }
 }

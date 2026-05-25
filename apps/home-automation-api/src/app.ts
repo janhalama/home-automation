@@ -8,9 +8,10 @@ import { TypeBoxTypeProvider } from "@fastify/type-provider-typebox";
 import { readEnvironmentConfig, type EnvironmentConfig } from "./config/environment.js";
 import { formatErrorResponse } from "./lib/plain-text-response.js";
 import { registerPvProductionPredictionRoute } from "./routes/pv-production-prediction.route.js";
+import type { FetchImpl } from "./services/forecast-solar-client.js";
 
 export type AppDeps = EnvironmentConfig & {
-  fetchImpl: typeof fetch;
+  fetchImpl: FetchImpl;
 };
 
 /* Create application dependencies from environment variables. */

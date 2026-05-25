@@ -18,10 +18,21 @@ export type DailyForecast = {
   tomorrowWh: number;
 };
 
+export type HttpResponse = {
+  ok: boolean;
+  status: number;
+  json(): Promise<unknown>;
+};
+
+export type FetchImpl = (
+  url: string,
+  init?: { signal?: AbortSignal }
+) => Promise<HttpResponse>;
+
 export type ForecastClientDeps = {
   forecastSolarApiKey: string;
   timeoutMs: number;
-  fetchImpl: typeof fetch;
+  fetchImpl: FetchImpl;
 };
 
 export type ForecastClientErrorCode =
