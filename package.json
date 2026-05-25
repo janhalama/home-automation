@@ -1,0 +1,15 @@
+{
+  "name": "home-automation",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Monorepo root for home automation C scripts and API services.",
+  "packageManager": "pnpm@8.15.4+sha1.c85a4305534f76d461407b59277b954bac97b5c4",
+  "scripts": {
+    "test": "pnpm -r test",
+    "lint": "pnpm -r lint",
+    "typecheck": "pnpm -r typecheck",
+    "api:dev": "pnpm --filter home-automation-api dev",
+    "api:test": "pnpm --filter home-automation-api test",
+    "api:build": "pnpm --filter home-automation-api build"
+  }
+}
