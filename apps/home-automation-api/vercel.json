@@ -1,5 +1,11 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "installCommand": "cd ../.. && pnpm install",
-  "buildCommand": "pnpm typecheck"
+  "buildCommand": "pnpm typecheck",
+  "rewrites": [
+    {
+      "source": "/(.*)",
+      "destination": "/src/app.ts"
+    }
+  ]
 }
