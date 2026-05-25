@@ -29,6 +29,14 @@ export type FetchImpl = (
   init?: { signal?: AbortSignal }
 ) => Promise<HttpResponse>;
 
+/* Adapt runtime fetch to the minimal response contract used by the client. */
+export function createDefaultFetchImpl(): FetchImpl {
+  return async (url, init) => {
+    const response = await fetch(url, init);
+    return response as unknown as HttpResponse;
+  };
+}
+
 export type ForecastClientDeps = {
   forecastSolarApiKey: string;
   timeoutMs: number;
