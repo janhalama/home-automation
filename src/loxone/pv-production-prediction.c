@@ -32,12 +32,7 @@ Outputs:
 #define WEST_KWP     "4.5"
 
 // URL format — all aggregation and date logic handled by the API
-#define URL_FORMAT \
-    "/api/pv/production-prediction" \
-    "?lat=%s&lon=%s&slope=%s" \
-    "&eastAzimuth=%s&eastKwp=%s" \
-    "&westAzimuth=%s&westKwp=%s" \
-    "&apiKey=%s"
+#define URL_FORMAT "/api/pv/production-prediction?lat=%s&lon=%s&slope=%s&eastAzimuth=%s&eastKwp=%s&westAzimuth=%s&westKwp=%s&apiKey=%s"
 
 // Output indexes
 #define OUTPUT_TODAY    0
