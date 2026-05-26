@@ -5,6 +5,7 @@ It checks auth, query validation, success formatting, and upstream error mapping
 
 import { describe, expect, it } from "vitest";
 import { createApp } from "../src/create-app.js";
+import { createDatePair } from "../src/lib/date.js";
 
 function createQueryString(): string {
   return [
@@ -82,6 +83,7 @@ describe("GET /api/pv/production-prediction", () => {
   });
 
   it("returns aggregated plain text values on success", async () => {
+    const datePair = createDatePair();
     const app = createApp({
       apiKey: "secret-key",
       cacheTtlSeconds: 3600,
@@ -94,16 +96,16 @@ describe("GET /api/pv/production-prediction", () => {
           ? {
               result: {
                 watt_hours_day: {
-                  "2026-05-25": 10000,
-                  "2026-05-26": 12000
+                  [datePair.todayKey]: 10000,
+                  [datePair.tomorrowKey]: 12000
                 }
               }
             }
           : {
               result: {
                 watt_hours_day: {
-                  "2026-05-25": 3000,
-                  "2026-05-26": 5000
+                  [datePair.todayKey]: 3000,
+                  [datePair.tomorrowKey]: 5000
                 }
               }
             };
