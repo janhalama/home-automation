@@ -1,0 +1,22 @@
+# Run from repository root:
+# docker compose -f apps/home-automation-api/docker-compose.yml up -d --build
+#
+# Host port 3001 because 3000 is often already taken (TeslaMate Grafana on this NAS).
+# The process inside the container still listens on 3000.
+# Secrets come from the repo-root .env via env_file and are not overridden below.
+
+services:
+  home-automation-api:
+    build:
+      context: ../..
+      dockerfile: apps/home-automation-api/Dockerfile
+    container_name: home-automation-api
+    restart: unless-stopped
+    ports:
+      - "3001:3000"
+    env_file:
+      - ../../.env
+    environment:
+      FORECAST_SOLAR_TIMEOUT_MS: "8000"
+      CACHE_TTL_SECONDS: "3600"
+      PORT: "3000"

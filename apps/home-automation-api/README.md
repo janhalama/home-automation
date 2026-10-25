@@ -76,15 +76,89 @@ The serverless entrypoint is `src/app.ts`, which default-exports the Vercel hand
 
 ## Loxone Integration
 
-Update the PV prediction block to call the deployed service instead of forecast.solar directly:
+Loxone PicoC `httpget` supports **plain HTTP only** — not HTTPS. Cloud hosts (Vercel, Railway) redirect HTTP to HTTPS, so Loxone cannot call them directly.
 
-```text
-SERVER_ADDRESS "<your-vercel-domain>"
-URL_PATH "/api/pv/production-prediction?lat=...&lon=...&slope=...&eastAzimuth=...&eastKwp=...&westAzimuth=...&westKwp=...&apiKey=..."
+Run the API on a device on your LAN (e.g. TrueNAS Scale Docker) and wire the script inputs:
+
+| Input | Example | Purpose |
+| --- | --- | --- |
+| I1 | trigger | Fetch on event |
+| T1 | your API key | `HOME_AUTOMATION_API_KEY` |
+| T2 | `192.168.1.50:3001` | TrueNAS IP and port (no `http://`) |
+
+Test from your network before deploying to Loxone:
+
+```bash
+curl -sS "http://192.168.1.50:3001/api/pv/production-prediction?lat=50.6920036&lon=15.2203556&slope=45&eastAzimuth=-63&eastKwp=5.5&westAzimuth=113&westKwp=4.5&apiKey=YOUR_KEY"
 ```
 
-The C script should:
+Build the bundled script for Loxone Config:
 
-- Treat HTTP `200` as success.
-- Parse `today=` and `tomorrow=` lines from the plain-text body.
-- Leave existing outputs unchanged on auth, validation, or upstream failures.
+```bash
+cmake -B build -S . && cmake --build build
+```
+
+Copy `build/pv-production-prediction.bundled.c` into the PicoC program block.
+
+The script treats HTTP `200` as success and parses `today=` / `tomorrow=` from the plain-text body.
+
+## TrueNAS Scale Deployment
+
+TrueNAS Scale can run the API as a Docker container — no Raspberry Pi needed. Loxone calls the TrueNAS LAN IP over plain HTTP; the container calls forecast.solar over HTTPS.
+
+**Requirements:** TrueNAS **Scale** (not Core) with Apps enabled.
+
+### 1. Clone the repo on TrueNAS
+
+Use the TrueNAS Shell or SSH. Pick a dataset path, e.g. `/mnt/tank/apps/home-automation`:
+
+```bash
+cd /mnt/tank/apps
+git clone <your-repo-url> home-automation
+cd home-automation
+```
+
+### 2. Set environment variables
+
+Create `.env` in the repo root:
+
+```bash
+HOME_AUTOMATION_API_KEY=your-secret-key
+FORECAST_SOLAR_API_KEY=
+FORECAST_SOLAR_TIMEOUT_MS=8000
+CACHE_TTL_SECONDS=3600
+```
+
+### 3. Start the container
+
+From the repo root:
+
+```bash
+docker compose -f apps/home-automation-api/docker-compose.yml up -d --build
+```
+
+The API is published on host port **3001** (the process inside the container listens on 3000). Give TrueNAS a static IP (or DHCP reservation) on your LAN.
+
+### 4. Test from your network
+
+```bash
+curl -sS "http://TRUENAS_IP:3001/api/pv/production-prediction?lat=50.6920036&lon=15.2203556&slope=45&eastAzimuth=-63&eastKwp=5.5&westAzimuth=113&westKwp=4.5&apiKey=YOUR_KEY"
+```
+
+### 5. Wire Loxone
+
+| Input | Value |
+| --- | --- |
+| T1 | your API key |
+| T2 | `TRUENAS_IP:3001` (no `http://`) |
+
+Rebuild the Loxone script (`cmake --build build`) and paste `build/pv-production-prediction.bundled.c` into the PicoC block.
+
+### TrueNAS Custom App (alternative)
+
+Instead of Shell, use **Apps → Discover Apps → Custom App** and deploy the same `docker-compose.yml`, or build the image elsewhere:
+
+```bash
+docker build -f apps/home-automation-api/Dockerfile -t home-automation-api .
+```
+
