@@ -3,7 +3,6 @@
 build
 node_modules
 .pnpm-store
-.vercel
 dist
 .env
 *.md

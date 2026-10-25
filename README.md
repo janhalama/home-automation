@@ -69,7 +69,7 @@ This script manages the state of an inverter based on various inputs such as cur
 
 This project includes a suite of tests to verify the functionality of its components.
 
-The repository also contains a pnpm monorepo with the Fastify API in `apps/home-automation-api`. See [apps/home-automation-api/README.md](apps/home-automation-api/README.md) for API development and Vercel deployment.
+The repository also contains a pnpm monorepo with the Fastify API in `apps/home-automation-api`. See [apps/home-automation-api/README.md](apps/home-automation-api/README.md) for local development and LAN deployment.
 
 ### Prerequisites
 

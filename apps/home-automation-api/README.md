@@ -1,6 +1,6 @@
 # home-automation-api
 
-Fastify API deployed to Vercel for home automation integrations. The first scoped endpoint is PV production prediction.
+Fastify API for home automation integrations. It runs on the LAN so Loxone can call it over plain HTTP. The first endpoint is PV production prediction.
 
 ## Endpoint
 
@@ -60,25 +60,11 @@ pnpm --filter home-automation-api typecheck
 | `FORECAST_SOLAR_API_KEY` | no | empty | **Leave empty on the free tier.** forecast.solar free access needs no API key (today + tomorrow, hourly data). Only set this if you have a paid subscription with a valid key. |
 | `FORECAST_SOLAR_TIMEOUT_MS` | no | `8000` | Upstream request timeout in milliseconds |
 | `CACHE_TTL_SECONDS` | no | `3600` | Cache-Control `s-maxage` for successful responses |
-| `PORT` | no | `3000` | Local development port |
-
-## Vercel Deployment
-
-1. Create a Vercel project from this repository.
-2. Set **Root Directory** to `apps/home-automation-api`.
-3. Leave the default **Framework Preset** as Vercel auto-detected Fastify/Node, or set it to **Other**.
-4. Set **Install Command** to `cd ../.. && pnpm install`.
-5. Leave **Build Command** to `pnpm typecheck` so Vercel uses the same TypeScript check as local development.
-6. Add environment variables in the Vercel dashboard (`HOME_AUTOMATION_API_KEY` is required).
-7. Deploy.
-
-The serverless entrypoint is `src/app.ts`, which default-exports the Vercel handler and builds the Fastify app from `src/create-app.ts`.
+| `PORT` | no | `3000` | Port the API process listens on |
 
 ## Loxone Integration
 
-Loxone PicoC `httpget` supports **plain HTTP only** — not HTTPS. Cloud hosts (Vercel, Railway) redirect HTTP to HTTPS, so Loxone cannot call them directly.
-
-Run the API on a device on your LAN (e.g. TrueNAS Scale Docker) and wire the script inputs:
+Loxone PicoC `httpget` supports plain HTTP only. Run this API on the LAN (for example TrueNAS Scale) and wire the script inputs:
 
 | Input | Example | Purpose |
 | --- | --- | --- |
