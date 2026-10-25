@@ -1,26 +1,28 @@
 /*
 Loxone PicoC programming block for fetching PV production predictions from
-the home-automation-api service on Vercel. Returns aggregated today/tomorrow
-production in kWh for both east and west panel orientations combined.
+the home-automation-api service. Returns aggregated today/tomorrow production
+in kWh for both east and west panel orientations combined.
+
+PicoC httpget supports plain HTTP only (no HTTPS). Run the API on a local
+device (e.g. TrueNAS Scale Docker) and point Input T2 at host:port.
 
 The script should not be triggered more than once a day to stay within
 forecast.solar free-tier rate limits.
 
 Inputs:
-- Input 1: Trigger event to fetch the data
-- Input 2: API key (text) — value of HOME_AUTOMATION_API_KEY set in Vercel
+- Input 1 (I1): Trigger event to fetch the data
+- Input 2 (T1): API key — value of HOME_AUTOMATION_API_KEY
+- Input 3 (T2): Server address — e.g. "192.168.1.50:3001"
 
 Outputs:
 - Output 1: PV production prediction for today (kWh)
 - Output 2: PV production prediction for tomorrow (kWh)
 */
 
-// API connection — https:// prefix enables TLS on Loxone PicoC
-#define SERVER_ADDRESS "https://home-automation-home-automation-api.vercel.app"
-
 // Input indexes
 #define INPUT_TRIGGER  0  // I1 — numeric trigger event
-#define INPUT_API_KEY  0  // T1 — first text input (separate index space from numeric inputs)
+#define INPUT_API_KEY  0  // T1 — first text input
+#define INPUT_SERVER   1  // T2 — API host:port (plain HTTP)
 
 // Panel configuration
 #define LATITUDE     "50.6920036"
@@ -66,16 +68,16 @@ Extract a named float value from a "key=value\n" plain-text body.
 Returns 0.0 when the key is not present.
 */
 float parseNamedFloat(char* body, char* key) {
-    char search[64];
+    char search[32];
     char* pos;
-    float val = 0.0;
+
+    if (body == NULL || key == NULL) return 0.0;
 
     sprintf(search, "%s=", key);
     pos = strstr(body, search);
     if (pos == NULL) return 0.0;
 
-    sscanf(pos + strlen(search), "%f", &val);
-    return val;
+    return atof(pos + strlen(search));
 }
 
 int nEvents;
@@ -83,6 +85,7 @@ int initialFetchDone = 0;
 char url[512];
 char debug[256];
 char* apiKey;
+char* serverAddress;
 char* response;
 char* body;
 float todayKwh;
@@ -92,42 +95,46 @@ while (TRUE) {
     nEvents = getinputevent();
     if ((nEvents & 0xFF) || !initialFetchDone) {
         apiKey = getinputtext(INPUT_API_KEY);
+        serverAddress = getinputtext(INPUT_SERVER);
 
-        sprintf(url, URL_FORMAT,
-            LATITUDE, LONGITUDE, SLOPE,
-            EAST_AZIMUTH, EAST_KWP,
-            WEST_AZIMUTH, WEST_KWP,
-            apiKey);
-
-        setoutputtext(DEBUG_URL, url);
-
-        response = httpget(SERVER_ADDRESS, url);
-        if (response == NULL) {
-            setoutputtext(DEBUG_STATUS, "error: no response from server");
+        if (apiKey == NULL || serverAddress == NULL || apiKey[0] == 0 || serverAddress[0] == 0) {
+            setoutputtext(DEBUG_STATUS, "error: missing api key or server");
         } else {
-            body = skipHeaders(response);
-            setoutputtext(DEBUG_RESPONSE, body);
+            sprintf(url, URL_FORMAT,
+                LATITUDE, LONGITUDE, SLOPE,
+                EAST_AZIMUTH, EAST_KWP,
+                WEST_AZIMUTH, WEST_KWP,
+                apiKey);
 
-            if (strstr(body, "today=") == NULL) {
-                sprintf(debug, "error: %s", body);
-                setoutputtext(DEBUG_STATUS, debug);
+            setoutputtext(DEBUG_URL, url);
+
+            response = httpget(serverAddress, url);
+            if (response == NULL) {
+                setoutputtext(DEBUG_STATUS, "error: no response from server");
             } else {
-                todayKwh    = parseNamedFloat(body, "today");
-                tomorrowKwh = parseNamedFloat(body, "tomorrow");
+                body = skipHeaders(response);
+                setoutputtext(DEBUG_RESPONSE, body);
 
-                sprintf(debug, "today=%.3f tomorrow=%.3f", todayKwh, tomorrowKwh);
-                setoutputtext(DEBUG_STATUS, debug);
+                if (body == NULL || strstr(body, "today=") == NULL) {
+                    setoutputtext(DEBUG_STATUS, "error: unexpected response");
+                } else {
+                    todayKwh    = parseNamedFloat(body, "today");
+                    tomorrowKwh = parseNamedFloat(body, "tomorrow");
 
-                setoutput(OUTPUT_TODAY,    todayKwh);
-                setio(VI_TODAY,            todayKwh);
+                    sprintf(debug, "today=%.3f tomorrow=%.3f", todayKwh, tomorrowKwh);
+                    setoutputtext(DEBUG_STATUS, debug);
 
-                setoutput(OUTPUT_TOMORROW, tomorrowKwh);
-                setio(VI_TOMORROW,         tomorrowKwh);
+                    setoutput(OUTPUT_TODAY,    todayKwh);
+                    setio(VI_TODAY,            todayKwh);
 
-                initialFetchDone = 1;
+                    setoutput(OUTPUT_TOMORROW, tomorrowKwh);
+                    setio(VI_TOMORROW,         tomorrowKwh);
+
+                    initialFetchDone = 1;
+                }
+
+                free(response);
             }
-
-            free(response);
         }
     }
     sleep(1000);

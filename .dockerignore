@@ -1,0 +1,10 @@
+.git
+.gitignore
+build
+node_modules
+.pnpm-store
+dist
+.env
+*.md
+/docs
+/src
