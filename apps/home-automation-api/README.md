@@ -90,61 +90,23 @@ The script treats HTTP `200` as success and parses `today=` / `tomorrow=` from t
 
 ## TrueNAS Scale Deployment
 
-TrueNAS Scale can run the API as a Docker container — no Raspberry Pi needed. Loxone calls the TrueNAS LAN IP over plain HTTP; the container calls forecast.solar over HTTPS.
-
-**Requirements:** TrueNAS **Scale** (not Core) with Apps enabled.
-
-### 1. Clone the repo on TrueNAS
-
-Use the TrueNAS Shell or SSH. Pick a dataset path, e.g. `/mnt/tank/apps/home-automation`:
-
-```bash
-cd /mnt/tank/apps
-git clone <your-repo-url> home-automation
-cd home-automation
-```
-
-### 2. Set environment variables
-
-Create `.env` in the repo root:
-
-```bash
-HOME_AUTOMATION_API_KEY=your-secret-key
-FORECAST_SOLAR_API_KEY=
-FORECAST_SOLAR_TIMEOUT_MS=8000
-CACHE_TTL_SECONDS=3600
-```
-
-### 3. Start the container
+The house NAS already runs this API as the custom app `home-automation-api` on port **3001**. The Home automation page is a second container on port **4321**. Secrets stay in `/mnt/Data/apps/home-automation/.env` on the NAS and are not copied by the scripts.
 
 From the repo root:
 
 ```bash
-docker compose -f apps/home-automation-api/docker-compose.yml up -d --build
+pnpm deploy:api
+pnpm deploy:app
 ```
 
-The API is published on host port **3001** (the process inside the container listens on 3000). Give TrueNAS a static IP (or DHCP reservation) on your LAN.
+`deploy:api` rebuilds `home-automation-api:1.0.0` and recreates that custom app. Loxone's forecast call is down for the few seconds of the recreate. `deploy:app` publishes the page at `http://192.168.1.3:4321`.
 
-### 4. Test from your network
+Heater samples start once `LOXONE_HOST`, `LOXONE_USER`, and `LOXONE_PASSWORD` are in the NAS `.env`. Spot prices are stored without them.
+
+Check the API from the LAN:
 
 ```bash
-curl -sS "http://TRUENAS_IP:3001/api/pv/production-prediction?lat=50.6920036&lon=15.2203556&slope=45&eastAzimuth=-63&eastKwp=5.5&westAzimuth=113&westKwp=4.5&apiKey=YOUR_KEY"
+curl -sS "http://192.168.1.3:3001/api/pv/production-prediction?lat=50.6920036&lon=15.2203556&slope=45&eastAzimuth=-63&eastKwp=5.5&westAzimuth=113&westKwp=4.5&apiKey=YOUR_KEY"
 ```
 
-### 5. Wire Loxone
-
-| Input | Value |
-| --- | --- |
-| T1 | your API key |
-| T2 | `TRUENAS_IP:3001` (no `http://`) |
-
-Rebuild the Loxone script (`cmake --build build`) and paste `build/pv-production-prediction.bundled.c` into the PicoC block.
-
-### TrueNAS Custom App (alternative)
-
-Instead of Shell, use **Apps → Discover Apps → Custom App** and deploy the same `docker-compose.yml`, or build the image elsewhere:
-
-```bash
-docker build -f apps/home-automation-api/Dockerfile -t home-automation-api .
-```
-
+Loxone still calls `192.168.1.3:3001`. The PicoC inputs stay T1 = API key and T2 = `192.168.1.3:3001`.

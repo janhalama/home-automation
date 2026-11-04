@@ -3,3 +3,8 @@ node_modules/
 .pnpm-store/
 dist/
 .env
+data/wattsonic/
+data/open-meteo/
+data/*.sqlite
+apps/energy-view/.astro/
+**/__pycache__/
