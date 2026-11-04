@@ -25,6 +25,18 @@ export function overnightKwh(season: Season): number {
   return OVERNIGHT_KWH[season];
 }
 
+/* Map a calendar date to the season used by the overnight and PV tables. */
+export function seasonOf(date: string): Season {
+  const month = Number(date.slice(5, 7));
+  if (month === 12 || month <= 2)
+    return "winter";
+  if (month <= 5)
+    return "spring";
+  if (month <= 8)
+    return "summer";
+  return "autumn";
+}
+
 /* Return the median PV total for that season and morning low-cloud band. */
 export function expectedPvKwh(season: Season, band: CloudBand): number {
   return EXPECTED_PV_KWH[season][band];
