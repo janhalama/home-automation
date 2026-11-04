@@ -7,6 +7,8 @@
  Input 3 - Battery SOC
  Input 4 - User configuration for SOC threshold to charge with ECO power
 
+ Plan: fresh is VI9, Plan: car is VI18, Plan: car kW is VI19. No wire from the planner.
+
  Outputs:
  Output 1 - The result is ECO charging power to be assigned to Wallbox Manager
  Output 2 - Eco charging enabled flag
@@ -16,6 +18,9 @@
 #define SECONDS_IN_A_MINUTE 60
 #define SOC_HYSTERESIS_MARGIN 2.0 // Hysteresis margin for SOC to avoid frequent switching charging on/off
 #define ONE_SECOND_SLEEP 1000 // Sleep for 1s in the main loop
+#define VI_PLAN_FRESH "VI9"
+#define VI_PLAN_CAR "VI18"
+#define VI_PLAN_CAR_KW "VI19"
 
 float userConfigEcoPower;
 float userConfigSocTreshold;
@@ -36,15 +41,29 @@ for (loopIndex = 0; loopIndex < SECONDS_IN_A_MINUTE; loopIndex++) {
 }
 
 while (TRUE) {
+    int planFresh;
+    float planCarCommand;
     userConfigEcoPower = getinput(0);
     currentSolarPowerProduction = getinput(1);
     batterySoc = getinput(2);
     userConfigSocTreshold = getinput(3);
+    planFresh = getio(VI_PLAN_FRESH) == 1;
+    planCarCommand = getio(VI_PLAN_CAR);
 
     solarPowerReadings[solarPowerReadingsIndex] = currentSolarPowerProduction;
     solarPowerReadingsIndex = (solarPowerReadingsIndex + 1) % SECONDS_IN_A_MINUTE;
 
-    if (solarPowerReadingsIndex == 0) {  // Every minute
+    if (planFresh && planCarCommand >= 0) {
+        if (planCarCommand >= 1) {
+            ecoPower = getio(VI_PLAN_CAR_KW);
+            carCharging = 1;
+        } else {
+            ecoPower = 0;
+            carCharging = 0;
+        }
+        setoutput(0, ecoPower);
+        setoutput(1, carCharging);
+    } else if (solarPowerReadingsIndex == 0) {  // Every minute
         float sum = 0.0;
         for (loopIndex = 0; loopIndex < SECONDS_IN_A_MINUTE; loopIndex++) {
             sum += solarPowerReadings[loopIndex];
