@@ -37,10 +37,14 @@ export function createDefaultFetchImpl(): FetchImpl {
   };
 }
 
+export type ForecastCache = Map<string, { forecast: DailyForecast; storedAt: number }>;
+
 export type ForecastClientDeps = {
   forecastSolarApiKey: string;
   timeoutMs: number;
   fetchImpl: FetchImpl;
+  cacheTtlSeconds?: number;
+  forecastCache?: ForecastCache;
 };
 
 export type ForecastClientErrorCode =
@@ -113,12 +117,31 @@ function parseDailyForecastPayload(payload: unknown): DailyForecast {
   };
 }
 
+/* Return a forecast stored inside the cache lifetime. */
+function freshForecast(
+  cache: ForecastCache | undefined,
+  url: string,
+  ttlSeconds: number,
+  now: number
+): DailyForecast | null {
+  const stored = cache?.get(url);
+  if (!stored || ttlSeconds <= 0)
+    return null;
+  if (now - stored.storedAt >= ttlSeconds * 1000)
+    return null;
+  return stored.forecast;
+}
+
 /* Fetch daily predictions for one panel orientation with timeout and mapping. */
 export async function fetchPanelDailyForecast(
   query: PanelQuery,
   deps: ForecastClientDeps
 ): Promise<DailyForecast> {
   const url = buildForecastUrl(query, deps.forecastSolarApiKey);
+  const ttlSeconds = deps.cacheTtlSeconds ?? 0;
+  const fresh = freshForecast(deps.forecastCache, url, ttlSeconds, Date.now());
+  if (fresh)
+    return fresh;
 
   try {
     const response = await deps.fetchImpl(url, {
@@ -136,8 +159,14 @@ export async function fetchPanelDailyForecast(
     }
 
     const json = await response.json();
-    return parseDailyForecastPayload(json);
+    const forecast = parseDailyForecastPayload(json);
+    if (ttlSeconds > 0)
+      deps.forecastCache?.set(url, { forecast, storedAt: Date.now() });
+    return forecast;
   } catch (error) {
+    const stored = deps.forecastCache?.get(url);
+    if (isForecastClientError(error) && error.code === "upstream_rate_limited" && stored)
+      return stored.forecast;
     if (isForecastClientError(error))
       throw error;
     if (error instanceof Error && error.name === "TimeoutError")

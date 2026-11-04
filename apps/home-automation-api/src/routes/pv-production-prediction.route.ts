@@ -14,11 +14,14 @@ import {
   aggregatePvPrediction,
   type PvPredictionQuery
 } from "../services/pv-production-aggregator.js";
+import { applyLearnedForecast } from "../services/apply-learned-forecast.js";
+import type { PredictionStore } from "../services/prediction-store.js";
 
 export type RouteDeps = {
   apiKey: string;
   cacheTtlSeconds: number;
   forecastClientDeps: ForecastClientDeps;
+  predictionStore: PredictionStore | null;
 };
 
 const querySchema = Type.Object(
@@ -30,6 +33,7 @@ const querySchema = Type.Object(
     eastKwp: Type.Number(),
     westAzimuth: Type.Number(),
     westKwp: Type.Number(),
+    yesterdayKwh: Type.Optional(Type.Number()),
     apiKey: Type.Optional(Type.String())
   },
   { additionalProperties: false }
@@ -69,7 +73,10 @@ export function registerPvProductionPredictionRoute(
       querystring: querySchema
     },
     handler: async (request, reply) => {
-      const query = request.query as PvPredictionQuery & { apiKey?: string };
+      const query = request.query as PvPredictionQuery & {
+        apiKey?: string;
+        yesterdayKwh?: number;
+      };
       const headerApiKey = request.headers["x-api-key"];
       const queryApiKey = typeof query.apiKey === "string" ? query.apiKey : undefined;
 
@@ -96,7 +103,19 @@ export function registerPvProductionPredictionRoute(
       }
 
       try {
-        const prediction = await aggregatePvPrediction(query, deps.forecastClientDeps);
+        const issued = await aggregatePvPrediction(query, deps.forecastClientDeps);
+        const prediction = deps.predictionStore
+          ? await applyLearnedForecast(
+              issued.todayKwh,
+              issued.tomorrowKwh,
+              query.lat,
+              query.lon,
+              query.yesterdayKwh,
+              new Date(),
+              deps.forecastClientDeps.fetchImpl,
+              deps.predictionStore
+            )
+          : issued;
         reply
           .status(200)
           .type("text/plain; charset=utf-8")
