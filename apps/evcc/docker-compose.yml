@@ -1,0 +1,36 @@
+# Compose installed on the NAS as the TrueNAS custom app "evcc",
+# next to teslamate and home-automation-api. Do not also start this
+# file with docker compose while that app is running: both want port 7070.
+#
+# The app mounts the files in /mnt/Data/apps/evcc. Loxone credentials
+# stay in that directory's .env and are not stored in this file.
+
+services:
+  evcc:
+    image: evcc/evcc:latest
+    restart: unless-stopped
+    command: ["evcc", "--config", "/etc/evcc.yaml"]
+    ports:
+      - "7070:7070"
+    volumes:
+      - /mnt/Data/apps/evcc/evcc.yaml:/etc/evcc.yaml:ro
+      - /mnt/Data/apps/evcc/data:/root/.evcc
+    networks:
+      - default
+      - teslamate
+  bridge:
+    image: python:3.12-alpine
+    restart: unless-stopped
+    env_file:
+      - /mnt/Data/apps/evcc/.env
+    environment:
+      EVCC_URL: http://evcc:7070
+    volumes:
+      - /mnt/Data/apps/evcc/bridge.py:/app/bridge.py:ro
+    working_dir: /app
+    command: ["python", "-u", "bridge.py"]
+
+networks:
+  teslamate:
+    external: true
+    name: ix-teslamate_default
