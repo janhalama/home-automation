@@ -9,6 +9,7 @@ RUN corepack enable && corepack prepare pnpm@8.15.4 --activate
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY apps/home-automation-api/package.json apps/home-automation-api/
+COPY apps/energy-view/package.json apps/energy-view/
 
 RUN pnpm install --frozen-lockfile --filter home-automation-api...
 
@@ -27,6 +28,7 @@ RUN corepack enable && corepack prepare pnpm@8.15.4 --activate
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY apps/home-automation-api/package.json apps/home-automation-api/
+COPY apps/energy-view/package.json apps/energy-view/
 
 RUN pnpm install --frozen-lockfile --prod --filter home-automation-api...
 
@@ -34,4 +36,4 @@ COPY --from=build /app/apps/home-automation-api/dist apps/home-automation-api/di
 
 EXPOSE 3000
 
-CMD ["node", "apps/home-automation-api/dist/src/server.js"]
+CMD ["node", "--experimental-sqlite", "apps/home-automation-api/dist/src/server.js"]

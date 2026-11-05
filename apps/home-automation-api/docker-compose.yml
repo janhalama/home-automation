@@ -20,3 +20,7 @@ services:
       FORECAST_SOLAR_TIMEOUT_MS: "8000"
       CACHE_TTL_SECONDS: "3600"
       PORT: "3000"
+      PREDICTION_DB_PATH: /data/prediction.sqlite
+      WATTSONIC_DAYS_DIR: /data/wattsonic/days
+    volumes:
+      - ../../data:/data

@@ -1,0 +1,79 @@
+---
+import "../styles/material.css";
+---
+
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Home automation</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500&display=swap" rel="stylesheet" />
+  </head>
+  <body>
+    <header>
+      <h1>Home automation</h1>
+    </header>
+    <main>
+      <section class="card">
+        <h2>Connection</h2>
+        <form id="connection">
+          <label>API address
+            <input id="api-base" name="apiBase" value="http://192.168.1.3:3001" autocomplete="url" />
+          </label>
+          <label>API key
+            <input id="api-key" name="apiKey" type="password" autocomplete="off" />
+          </label>
+          <label>Day
+            <input id="day" name="day" type="date" />
+          </label>
+          <button id="prev-day" type="button" class="quiet">Previous</button>
+          <button id="today" type="button" class="quiet">Today</button>
+          <button id="next-day" type="button" class="quiet">Next</button>
+          <button type="submit">Load</button>
+        </form>
+        <p id="status" class="status"></p>
+      </section>
+
+      <section class="card">
+        <h2>What Loxone is given now</h2>
+        <p class="note">FVE today and FVE tomorrow are the predicted photovoltaic production.</p>
+        <div id="live" class="stats"></div>
+      </section>
+
+      <section class="card">
+        <h2>This day</h2>
+        <p class="note">Bought cheaply, sold expensively, the battery floor, and whether morning export was wise. The forecast line stays empty until a forecast and the production that followed it are both stored.</p>
+        <div id="scores" class="stats"></div>
+        <p id="forecast-deviation" class="note"></p>
+      </section>
+
+      <section class="card">
+        <h2>Price and hot water</h2>
+        <p id="day-label" class="note"></p>
+        <p class="note">Solid lines are what happened. The tank is a filled band on the price. Obluda is the dashed line drawn on that price, so it stays visible when the hours match. On the power chart Obluda is the high dashed line and the tank is the low one. Grid power below zero is import. Battery power below zero is charging.</p>
+        <p id="plan-line" class="note"></p>
+        <div class="chart-wrap"><canvas id="price-chart"></canvas></div>
+      </section>
+
+      <section class="card">
+        <h2>Power</h2>
+        <div class="chart-wrap"><canvas id="power-chart"></canvas></div>
+      </section>
+
+      <section class="card">
+        <h2>Obluda</h2>
+        <p id="car-note" class="note">Tesla Model Y.</p>
+        <div class="chart-wrap"><canvas id="car-chart"></canvas></div>
+      </section>
+
+      <section class="card">
+        <h2>Battery</h2>
+        <div class="chart-wrap"><canvas id="soc-chart"></canvas></div>
+      </section>
+    </main>
+    <script>
+      import "../scripts/dashboard.ts";
+    </script>
+  </body>
+</html>

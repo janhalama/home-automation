@@ -40,4 +40,35 @@ describe("fetchPanelDailyForecast", () => {
     expect(forecast.todayWh).toBe(10000);
     expect(forecast.tomorrowWh).toBe(12000);
   });
+
+  it("keeps one forecast for the cache lifetime and serves it when forecast.solar is rate limited", async () => {
+    const { todayKey, tomorrowKey } = createDatePair();
+    let calls = 0;
+    const fetchImpl = vi.fn(async () => {
+      calls += 1;
+      if (calls > 1)
+        return new Response("", { status: 429 });
+      return new Response(
+        JSON.stringify({ result: { [todayKey]: 1000, [tomorrowKey]: 2000 } }),
+        { status: 200 }
+      );
+    });
+    const query = { lat: 1, lon: 2, slope: 3, azimuth: 4, kwp: 5 };
+    const deps = {
+      forecastSolarApiKey: "",
+      timeoutMs: 8000,
+      fetchImpl,
+      cacheTtlSeconds: 3600,
+      forecastCache: new Map()
+    };
+
+    const first = await fetchPanelDailyForecast(query, deps);
+    const second = await fetchPanelDailyForecast(query, deps);
+    const limited = await fetchPanelDailyForecast(query, { ...deps, cacheTtlSeconds: 0 });
+
+    expect(first).toEqual({ todayWh: 1000, tomorrowWh: 2000 });
+    expect(second).toEqual(first);
+    expect(limited).toEqual(first);
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
 });

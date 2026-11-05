@@ -8,6 +8,17 @@ export type EnvironmentConfig = {
   forecastSolarApiKey: string;
   timeoutMs: number;
   cacheTtlSeconds: number;
+  predictionDbPath: string;
+  houseArchivePath: string;
+  wattsonicDaysDir: string;
+  loxoneHost: string;
+  loxoneUser: string;
+  loxonePassword: string;
+  teslamateMqttHost: string;
+  teslamateDatabaseHost: string;
+  teslamateDatabaseUser: string;
+  teslamateDatabasePassword: string;
+  teslamateDatabaseName: string;
 };
 
 /* Read API key configuration without crashing serverless startup. */
@@ -33,6 +44,17 @@ export function readEnvironmentConfig(): EnvironmentConfig {
     apiKey: readApiKey(process.env.HOME_AUTOMATION_API_KEY),
     forecastSolarApiKey,
     timeoutMs: readPositiveInt(process.env.FORECAST_SOLAR_TIMEOUT_MS, 8000),
-    cacheTtlSeconds: readPositiveInt(process.env.CACHE_TTL_SECONDS, 3600)
+    cacheTtlSeconds: readPositiveInt(process.env.CACHE_TTL_SECONDS, 3600),
+    predictionDbPath: process.env.PREDICTION_DB_PATH?.trim() ?? "",
+    houseArchivePath: process.env.PREDICTION_DB_PATH?.trim() ?? "",
+    wattsonicDaysDir: process.env.WATTSONIC_DAYS_DIR?.trim() ?? "",
+    loxoneHost: process.env.LOXONE_HOST?.trim() ?? "",
+    loxoneUser: process.env.LOXONE_USER?.trim() ?? "",
+    loxonePassword: process.env.LOXONE_PASSWORD ?? "",
+    teslamateMqttHost: process.env.TESLAMATE_MQTT_HOST?.trim() ?? "",
+    teslamateDatabaseHost: process.env.TESLAMATE_DATABASE_HOST?.trim() ?? "",
+    teslamateDatabaseUser: process.env.TESLAMATE_DATABASE_USER?.trim() ?? "",
+    teslamateDatabasePassword: process.env.TESLAMATE_DATABASE_PASSWORD ?? "",
+    teslamateDatabaseName: process.env.TESLAMATE_DATABASE_NAME?.trim() ?? ""
   };
 }

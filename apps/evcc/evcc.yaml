@@ -1,0 +1,77 @@
+# Two loadpoints for the Loxone wallboxes.
+# evcc chooses the mode. It does not assign amps.
+# The bridge ignores enable and maxcurrent, then writes Off or Eco from the mode.
+
+interval: 30s
+
+log: info
+
+network:
+  schema: http
+  host: 0.0.0.0
+  port: 7070
+
+meters:
+  - name: grid
+    type: custom
+    power:
+      source: const
+      value: 0
+
+mqtt:
+  broker: mosquitto:1883
+  topic: evcc
+
+site:
+  title: Halama
+  meters:
+    grid: grid
+
+vehicles:
+  - name: tesla
+    type: template
+    template: teslamate
+    title: Obluda
+    id: 1
+
+chargers:
+  - name: inner
+    type: custom
+    status:
+      source: http
+      uri: http://bridge:8080/inner/status
+    enabled:
+      source: http
+      uri: http://bridge:8080/inner/enabled
+    enable:
+      source: http
+      uri: http://bridge:8080/inner/enable?value={{if .enable}}true{{else}}false{{end}}
+      method: POST
+    maxcurrent:
+      source: http
+      uri: http://bridge:8080/inner/maxcurrent?value={{.maxcurrent}}
+      method: POST
+  - name: outer
+    type: custom
+    status:
+      source: http
+      uri: http://bridge:8080/outer/status
+    enabled:
+      source: http
+      uri: http://bridge:8080/outer/enabled
+    enable:
+      source: http
+      uri: http://bridge:8080/outer/enable?value={{if .enable}}true{{else}}false{{end}}
+      method: POST
+    maxcurrent:
+      source: http
+      uri: http://bridge:8080/outer/maxcurrent?value={{.maxcurrent}}
+      method: POST
+
+loadpoints:
+  - title: inner
+    charger: inner
+    mode: off
+  - title: outer
+    charger: outer
+    mode: off

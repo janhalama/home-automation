@@ -4,6 +4,9 @@ It checks auth, query validation, success formatting, and upstream error mapping
 */
 
 import { describe, expect, it } from "vitest";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createApp } from "../src/create-app.js";
 import { createDatePair } from "../src/lib/date.js";
 
@@ -126,6 +129,68 @@ describe("GET /api/pv/production-prediction", () => {
     expect(response.headers["content-type"]).toContain("text/plain");
     expect(response.body).toContain("today=13.000");
     expect(response.body).toContain("tomorrow=17.000");
+  });
+
+  it("replaces tomorrow with the median production of similar stored days", async () => {
+    const datePair = createDatePair();
+    const databasePath = join(mkdtempSync(join(tmpdir(), "prediction-")), "memory.sqlite");
+    const tomorrow = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Europe/Prague",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit"
+    }).format(new Date(Date.now() + 24 * 60 * 60 * 1000));
+    const tomorrowMonth = tomorrow.slice(5, 7);
+    const morning = ["06", "07", "08", "09", "10", "11"].map((hour) => `${tomorrow}T${hour}:00`);
+    const app = createApp({
+      apiKey: "secret-key",
+      cacheTtlSeconds: 3600,
+      timeoutMs: 8000,
+      forecastSolarApiKey: "",
+      predictionDbPath: databasePath,
+      fetchImpl: async (url) => {
+        const endpoint = String(url);
+        if (endpoint.includes("open-meteo.com")) {
+          return new Response(JSON.stringify({
+            hourly: {
+              time: morning,
+              cloud_cover_low: [0, 0, 0, 0, 0, 0]
+            }
+          }), { status: 200 });
+        }
+
+        const east = endpoint.includes("/-63/5.5");
+        const payload = east
+          ? { result: { watt_hours_day: { [datePair.todayKey]: 10000, [datePair.tomorrowKey]: 12000 } } }
+          : { result: { watt_hours_day: { [datePair.todayKey]: 3000, [datePair.tomorrowKey]: 5000 } } };
+        return new Response(JSON.stringify(payload), { status: 200 });
+      }
+    });
+
+    const { openPredictionStore } = await import("../src/services/prediction-store.js");
+    const store = openPredictionStore(databasePath);
+    [10, 12, 14, 16, 18].forEach((actualKwh, index) => {
+      const date = `2024-${tomorrowMonth}-${String(10 + index).padStart(2, "0")}`;
+      store.saveForecast({
+        date,
+        forecastKwh: 20,
+        lowCloud: 5,
+        actualKwh: null
+      });
+      store.saveActual(date, actualKwh);
+    });
+    store.close();
+
+    const response = await app.inject({
+      method: "GET",
+      url: `/api/pv/production-prediction?${createQueryString()}`,
+      headers: { "x-api-key": "secret-key" }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toContain("today=13.000");
+    expect(response.body).toContain("tomorrow=14.000");
+    await app.close();
   });
 
   it("maps upstream 503 to 503", async () => {

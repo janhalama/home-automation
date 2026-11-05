@@ -1,14 +1,19 @@
 /*
  Loxone programming block controlling the water tank heating.
 
+ A fresh plan command of 1 heats while the tank is below the threshold.
+ A fresh command of 0 stays off. Priority forces heat while the tank is below
+ the threshold, in every month.
+
+ With no fresh plan, May through August heat only from 06:00 to 21:00 and only
+ while the panels are producing more than the heater's 2.5 kW. September
+ through April heat a cold tank at any hour. Price and the forecast are not read.
+
  Inputs:
- - Input 1: Water tank temperature is bellow treshold, and should be charged
- - Input 2: The spot price is very low
- - Input 3: PV production prediction for today
- - Input 4: PV production prediction for tomorrow
- - Input 5: Inverter working mode
- - Input 6: Inverter excess energy available
- - Input 7: Enable priority charging (charges whenever the temperature is below treshold)
+ - Input 1: Water tank temperature is below the threshold
+ - Inputs 2 to 6: kept so the later inputs stay put. Nothing reads them.
+ - Input 7: Enable priority charging
+ - Plan: fresh is virtual input VI9. Plan: tank is VI10. No wire from the planner.
 
  Outputs:
  - Output 1: Heating On / Off
@@ -33,67 +38,49 @@
 
 // Virtual input connection addresses
 #define VI_PV_POWER_NOW "AMQ125"
+#define VI_PLAN_FRESH "VI9"
+#define VI_PLAN_TANK "VI10"
 
-// This is exactly the power the water heater consumes when heating on
+// The heater draws this much. May through August a missing plan heats only while the panels cover it.
 #define PV_POWER_THRESHOLD_IN_KW 2.5
-
-// This is the minimum power the PV should produce to charge the water tank and supply the house during the day
-#define PV_LOW_PRODUCTION_THRESHOLD_IN_KW 20
-
-// Define constants for inverter modes
-#define INVERTER_GENERAL_MODE 257
-#define INVERTER_ECONOMIC_MODE 258
-#define INVERTER_UPS_MODE 259
-
 
 // Control the heating based on the inputs
 void controlHeating() {
 
     char inputs[1024];
     int temperatureBelowTreshold = getinput(INPUT_WATER_TANK_TEMPERATURE_BELOW_TRESHOLD) == 1;
-    int spotPriceIsVeryLow = getinput(INPUT_SPOT_PRICE_VLOW) == 1;
-    float predictedPVToday = getinput(INPUT_PREDICTED_PV_TODAY);
-    float predictedPVTomorrow = getinput(INPUT_PREDICTED_PV_TOMORROW);
-    int inverterMode = getinput(INPUT_INVERTER_MODE);
-    int excessEnergyAvailable = getinput(INPUT_INVERTER_EXCESS_ENERGY_AVAILABLE) == 1;
     int priorityChargingEnabled = getinput(INPUT_PRIORITY_CHARGING_ENABLED) == 1;
-    float pwPowerNow = getio(VI_PV_POWER_NOW);
+    int planFresh = getio(VI_PLAN_FRESH) == 1;
+    float planTankCommand = getio(VI_PLAN_TANK);
+    float pvPowerNow = getio(VI_PV_POWER_NOW);
     int hourNow = gethour(getcurrenttime(), 1);
-    int canCharge = 0;
-    int sufficientPVPowerNow = pwPowerNow > PV_POWER_THRESHOLD_IN_KW;
-    int sufficientPVProductionToday = predictedPVToday > PV_LOW_PRODUCTION_THRESHOLD_IN_KW;
-    int sufficientPVProductionTomorrow = predictedPVTomorrow > PV_LOW_PRODUCTION_THRESHOLD_IN_KW;
-    int isDayMode = 0;
-    
-    // TODO: use better algorithm to determine that the hour is during the day (sunrise to sunset)
-    if(hourNow >= 6 && hourNow < 21) {
-        // During the day
-        isDayMode = 1;
-        canCharge = 
-            (!sufficientPVProductionToday && spotPriceIsVeryLow) ||
-            (sufficientPVPowerNow && spotPriceIsVeryLow);
-    } else {
-        // During the night
-        isDayMode = 0;
-        canCharge = !sufficientPVProductionTomorrow && spotPriceIsVeryLow;
-    }
+    int monthNow = getmonth(getcurrenttime(), 1);
+    int summer = monthNow >= 5 && monthNow <= 8;
+    int day = hourNow >= 6 && hourNow < 21;
+    int sunCoversHeater = pvPowerNow > PV_POWER_THRESHOLD_IN_KW;
+    int heatOffline = temperatureBelowTreshold;
+    if (summer)
+        heatOffline = temperatureBelowTreshold && day && sunCoversHeater;
 
-    // Only charge the water tank when excess energy is available (to avoid using grid power when prioritizing grid export)
-    setoutput(OUTPUT_HEATING_ON_OFF, (priorityChargingEnabled || canCharge) && temperatureBelowTreshold && excessEnergyAvailable);
+    // A fresh plan owns the heater. Without one, summer waits for the day's sun.
+    // The other seasons heat a cold tank at any hour. Priority forces that heat in every season.
+    if (priorityChargingEnabled && temperatureBelowTreshold)
+        setoutput(OUTPUT_HEATING_ON_OFF, 1);
+    else if (planFresh && planTankCommand >= 0)
+        setoutput(OUTPUT_HEATING_ON_OFF, planTankCommand >= 1 && temperatureBelowTreshold);
+    else
+        setoutput(OUTPUT_HEATING_ON_OFF, heatOffline);
 
     sprintf(inputs,
-            "Inputs:\n - Water tank temperature below treshold: %d\n - Spot price is very low: %d\n - Predicted PV production for tomorrow: %f\n - Predicted PV production for today: %f\n - Current PV production: %f\n - Current hour: %d\n - Is day mode: %d\n - Predicted PV tomorrow value: %f\n - Sufficient PV production tomorrow: %d\n - Can charge: %d\n - Excess energy available: %d",
+            "Tank below threshold: %d\nPV now: %f kW\nHour: %d\nMonth: %d\nSummer day sun: %d\nPlan fresh: %d\nPlan command: %f\nPriority: %d",
             temperatureBelowTreshold,
-            spotPriceIsVeryLow,
-            predictedPVTomorrow,
-            predictedPVToday,
-            pwPowerNow,
+            pvPowerNow,
             hourNow,
-            isDayMode,
-            predictedPVTomorrow,
-            sufficientPVProductionTomorrow,
-            canCharge,
-            excessEnergyAvailable);
+            monthNow,
+            summer && day && sunCoversHeater,
+            planFresh,
+            planTankCommand,
+            priorityChargingEnabled);
 
     // Set text output for debug inputs
     setoutputtext(TEXT_OUTPUT_DEBUG, inputs);

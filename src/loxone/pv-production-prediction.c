@@ -10,9 +10,10 @@ The script should not be triggered more than once a day to stay within
 forecast.solar free-tier rate limits.
 
 Inputs:
-- Input 1 (I1): Trigger event to fetch the data
-- Input 2 (T1): API key — value of HOME_AUTOMATION_API_KEY
-- Input 3 (T2): Server address — e.g. "192.168.1.50:3001"
+- I1: Trigger event to fetch the data
+- I2: Yesterday's completed PV production in kWh. Leave at 0 until that meter is wired.
+- T1: API key — value of HOME_AUTOMATION_API_KEY
+- T2: Server address — e.g. "192.168.1.50:3001"
 
 Outputs:
 - Output 1: PV production prediction for today (kWh)
@@ -20,9 +21,10 @@ Outputs:
 */
 
 // Input indexes
-#define INPUT_TRIGGER  0  // I1 — numeric trigger event
-#define INPUT_API_KEY  0  // T1 — first text input
-#define INPUT_SERVER   1  // T2 — API host:port (plain HTTP)
+#define INPUT_TRIGGER        0  // I1 — numeric trigger event
+#define INPUT_YESTERDAY_KWH  1  // I2 — completed production for yesterday, kWh. 0 means not wired.
+#define INPUT_API_KEY        0  // T1 — first text input
+#define INPUT_SERVER         1  // T2 — API host:port (plain HTTP)
 
 // Panel configuration
 #define LATITUDE     "50.6920036"
@@ -90,6 +92,7 @@ char* response;
 char* body;
 float todayKwh;
 float tomorrowKwh;
+float yesterdayKwh;
 
 while (TRUE) {
     nEvents = getinputevent();
@@ -105,6 +108,10 @@ while (TRUE) {
                 EAST_AZIMUTH, EAST_KWP,
                 WEST_AZIMUTH, WEST_KWP,
                 apiKey);
+
+            yesterdayKwh = getinput(INPUT_YESTERDAY_KWH);
+            if (yesterdayKwh > 0.1)
+                sprintf(url + strlen(url), "&yesterdayKwh=%.3f", yesterdayKwh);
 
             setoutputtext(DEBUG_URL, url);
 
@@ -125,10 +132,7 @@ while (TRUE) {
                     setoutputtext(DEBUG_STATUS, debug);
 
                     setoutput(OUTPUT_TODAY,    todayKwh);
-                    setio(VI_TODAY,            todayKwh);
-
                     setoutput(OUTPUT_TOMORROW, tomorrowKwh);
-                    setio(VI_TOMORROW,         tomorrowKwh);
 
                     initialFetchDone = 1;
                 }

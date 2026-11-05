@@ -1,0 +1,13 @@
+# Home automation page. The API stays on port 3001.
+# docker compose -f apps/energy-view/docker-compose.yml up -d --build
+
+services:
+  home-automation:
+    build:
+      context: ../..
+      dockerfile: apps/energy-view/Dockerfile
+    image: ${APP_IMAGE:-home-automation:1.0.0}
+    container_name: home-automation
+    restart: unless-stopped
+    ports:
+      - "4321:80"
