@@ -136,12 +136,13 @@ export function createApp(deps: CreateAppDeps = createEnvironmentDeps()) {
     predictionStore
   });
 
+  const readCar = deps.readCar ?? (deps.teslamateMqttHost
+    ? () => readTeslaMateCar(deps.teslamateMqttHost ?? "")
+    : null);
   registerEnergyPlanRoute(app, {
     apiKey: deps.apiKey,
     archive: houseArchive,
-    readCar: deps.readCar ?? (deps.teslamateMqttHost
-      ? () => readTeslaMateCar(deps.teslamateMqttHost ?? "")
-      : null),
+    readCar,
     fetchImpl: deps.fetchImpl
   });
 
@@ -159,7 +160,8 @@ export function createApp(deps: CreateAppDeps = createEnvironmentDeps()) {
     });
   registerCarDayRoute(app, {
     apiKey: deps.apiKey,
-    readCarDay: deps.readCarDay ?? (carHistory ? (date) => readCarDay(carHistory.query, date) : null)
+    readCarDay: deps.readCarDay ?? (carHistory ? (date) => readCarDay(carHistory.query, date) : null),
+    readChargeLimit: readCar ? async () => (await readCar()).limitPercent : null
   });
 
   return app;

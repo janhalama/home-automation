@@ -37,6 +37,7 @@ export type HouseArchive = {
   latestPowerSampleBefore(date: string): PowerReading | null;
   applyHeatingSample(sample: HeatingSample): void;
   listHeatingPeriods(date: string): HeatingPeriod[];
+  listHeatingTemperatures(date: string): { at: string; temperatureC: number }[];
   hasHeatingHistory(): boolean;
   latestHeating(): HeatingSample | null;
   close(): void;
@@ -122,6 +123,10 @@ export function openHouseArchive(path: string): HouseArchive {
       heating_on INTEGER NOT NULL,
       temperature_c REAL NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS heating_samples (
+      at TEXT PRIMARY KEY,
+      temperature_c REAL NOT NULL
+    );
   `);
 
   const savePrice = database.prepare(`
@@ -165,6 +170,14 @@ export function openHouseArchive(path: string): HouseArchive {
       at = excluded.at,
       heating_on = excluded.heating_on,
       temperature_c = excluded.temperature_c
+  `);
+  const saveTemperature = database.prepare(`
+    INSERT INTO heating_samples (at, temperature_c)
+    VALUES (?, ?)
+    ON CONFLICT(at) DO UPDATE SET temperature_c = excluded.temperature_c
+  `);
+  const listTemperatures = database.prepare(`
+    SELECT at, temperature_c FROM heating_samples WHERE at LIKE ? ORDER BY at
   `);
   const readLatest = database.prepare(`
     SELECT at, heating_on, temperature_c FROM heating_latest WHERE id = 1
@@ -237,6 +250,7 @@ export function openHouseArchive(path: string): HouseArchive {
       if (next.open && !open)
         insertPeriod.run(next.open.startedAt, next.open.startTemperatureC);
       saveLatest.run(sample.at, sample.heatingOn ? 1 : 0, sample.temperatureC);
+      saveTemperature.run(sample.at, sample.temperatureC);
     },
     listHeatingPeriods(date) {
       const rows = listPeriods.all(`${date}%`, `${date}%`) as Array<{
@@ -251,6 +265,10 @@ export function openHouseArchive(path: string): HouseArchive {
         startTemperatureC: row.start_temperature_c,
         endTemperatureC: row.end_temperature_c
       }));
+    },
+    listHeatingTemperatures(date) {
+      const rows = listTemperatures.all(`${date}%`) as Array<{ at: string; temperature_c: number }>;
+      return rows.map((row) => ({ at: row.at, temperatureC: row.temperature_c }));
     },
     hasHeatingHistory() {
       const row = countPeriods.get() as { count: number };

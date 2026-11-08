@@ -8,7 +8,7 @@ import { Type } from "@fastify/type-provider-typebox";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { formatErrorResponse } from "../lib/plain-text-response.js";
 import { scoreDay } from "../services/day-score.js";
-import { alignEnergyDay } from "../services/energy-series.js";
+import { alignEnergyDay, tankTemperatureClocks } from "../services/energy-series.js";
 import type { ForecastClientDeps } from "../services/forecast-solar-client.js";
 import type { HouseArchive } from "../services/house-archive.js";
 import { pragueTimestamp } from "../services/house-collector.js";
@@ -119,7 +119,13 @@ export function registerEnergyDataRoutes(app: FastifyInstance, deps: EnergyDataD
       if (samples.length === 0 && !missing.includes("curve"))
         missing.push("curve");
 
-      const points = alignEnergyDay({ date: query.date, prices, samples, heating });
+      const points = alignEnergyDay({
+        date: query.date,
+        prices,
+        samples,
+        heating,
+        temperatures: tankTemperatureClocks(deps.archive.listHeatingTemperatures(query.date), heating, query.date)
+      });
       const lowCloud = query.lowCloud !== undefined
         ? query.lowCloud
         : await fetchMorningLowCloud(HOUSE.lat, HOUSE.lon, query.date, deps.forecastClientDeps.fetchImpl);

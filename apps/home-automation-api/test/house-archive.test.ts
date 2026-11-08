@@ -36,6 +36,11 @@ describe("house archive", () => {
         endTemperatureC: 55
       }
     ]);
+    expect(archive.listHeatingTemperatures("2026-10-26")).toEqual([
+      { at: "2026-10-26T01:00:00", temperatureC: 35 },
+      { at: "2026-10-26T01:10:00", temperatureC: 40 },
+      { at: "2026-10-26T02:00:00", temperatureC: 55 }
+    ]);
     archive.close();
   });
 

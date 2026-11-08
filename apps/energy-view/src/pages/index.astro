@@ -6,13 +6,16 @@ import "../styles/material.css";
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Home automation</title>
+    <title>Halamaci automation</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500&display=swap" rel="stylesheet" />
   </head>
   <body>
     <header>
-      <h1>Home automation</h1>
+      <h1>Halamaci automation</h1>
     </header>
     <main>
       <section class="card">
@@ -36,8 +39,8 @@ import "../styles/material.css";
       </section>
 
       <section class="card">
-        <h2>What Loxone is given now</h2>
-        <p class="note">FVE today and FVE tomorrow are the predicted photovoltaic production.</p>
+        <h2>House now</h2>
+        <p class="note">These are measurements. The day below is one clock: what drove the plan, then each plan beside what happened.</p>
         <div id="live" class="stats"></div>
       </section>
 
@@ -49,27 +52,10 @@ import "../styles/material.css";
       </section>
 
       <section class="card">
-        <h2>Price and hot water</h2>
+        <h2>Plan and what happened</h2>
         <p id="day-label" class="note"></p>
-        <p class="note">Solid lines are what happened. The tank is a filled band on the price. Obluda is the dashed line drawn on that price, so it stays visible when the hours match. On the power chart Obluda is the high dashed line and the tank is the low one. Grid power below zero is import. Battery power below zero is charging.</p>
         <p id="plan-line" class="note"></p>
-        <div class="chart-wrap"><canvas id="price-chart"></canvas></div>
-      </section>
-
-      <section class="card">
-        <h2>Power</h2>
-        <div class="chart-wrap"><canvas id="power-chart"></canvas></div>
-      </section>
-
-      <section class="card">
-        <h2>Obluda</h2>
-        <p id="car-note" class="note">Tesla Model Y.</p>
-        <div class="chart-wrap"><canvas id="car-chart"></canvas></div>
-      </section>
-
-      <section class="card">
-        <h2>Battery</h2>
-        <div class="chart-wrap"><canvas id="soc-chart"></canvas></div>
+        <div id="day-rows"></div>
       </section>
     </main>
     <script>

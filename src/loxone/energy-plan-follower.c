@@ -3,6 +3,7 @@
 
  This replaces the forecast fetch block. The trigger is not used.
  The block fetches when it starts, and again every 15 minutes.
+ A failed fetch tries again after one minute. Retrying every second runs the block out of memory.
  A plan older than one hour is no longer fresh.
  - I1: the old trigger. Leave the wire or remove it. Nothing reads it.
  - I2: the solar block. The wire stays. The plan does not read it.
@@ -18,7 +19,7 @@
  Outputs, in order:
  - Output 1: Plan is fresh (1 or 0)
  - Output 2: Tank command. 1 heat, 0 stay off, -1 the tank block keeps its limited rule
- - Output 3: Car command. 1 allow, 0 stay off, -1 the car block keeps its own rule
+ - Output 3: Car command. 1 grid slot, 2 leftover sun, 3 the upper half of the house battery, 0 stay off, -1 the car block keeps its own rule
  - Output 4: Car power cap in kW while the car command is 1
  - Output 5: Battery command. 1 charge, -1 sell, 0 neither
  - Output 6: Battery charge power in kW while output 5 is on
@@ -56,6 +57,7 @@
 #define VI_PLAN_BATTERY_KW "VI21"
 
 #define FETCH_SECONDS 900
+#define RETRY_SECONDS 60
 #define FRESH_SECONDS 3600
 
 char tankFlag[16];
@@ -74,7 +76,9 @@ char batterySellFrom[8];
 char batterySellTo[8];
 char batterySellKwText[16];
 int hasPlan;
-int ageSeconds;
+int fetchFailed;
+int sinceFetch;
+int sinceAttempt;
 char lastError[80];
 
 /* Skip HTTP response headers and return the body. */
@@ -192,7 +196,7 @@ void publishPlan() {
     float batteryKw;
     char status[256];
     now = gethour(getcurrenttime(), 1) * 60 + getminute(getcurrenttime(), 1);
-    fresh = hasPlan && ageSeconds <= FRESH_SECONDS;
+    fresh = hasPlan && sinceFetch <= FRESH_SECONDS;
     tankCommand = -1;
     carCommand = -1;
     carKw = 0;
@@ -208,6 +212,12 @@ void publishPlan() {
         carCommand = insideSlot(now, carFrom, carTo);
         if (carCommand)
             carKw = atof(carKwText);
+    }
+    if (fresh && carFlag[0] == 's')
+        carCommand = 2;
+    if (fresh && carFlag[0] == 'b') {
+        carCommand = 3;
+        carKw = atof(carKwText);
     }
     if (fresh && batteryFlag[0] == 'g' && insideSlot(now, batteryFrom, batteryTo)) {
         batteryCharge = 1;
@@ -239,34 +249,42 @@ void publishPlan() {
     setoutputtext(DEBUG_STATUS, status);
 }
 
-int ticks;
 float solarKwh;
+int waitSeconds;
 char* apiKey;
 char* serverAddress;
 
 hasPlan = 0;
-ageSeconds = FRESH_SECONDS + 1;
+fetchFailed = 0;
+sinceFetch = FRESH_SECONDS + 1;
+sinceAttempt = FETCH_SECONDS;
 lastError[0] = 0;
-ticks = 0;
 tankFlag[0] = 0;
 carFlag[0] = 0;
 batteryFlag[0] = 0;
 
 while (TRUE) {
     solarKwh = getinput(INPUT_SOLAR);
-    if (ticks == 0 || ageSeconds >= FETCH_SECONDS) {
+    waitSeconds = FETCH_SECONDS;
+    if (fetchFailed)
+        waitSeconds = RETRY_SECONDS;
+    if (sinceAttempt >= waitSeconds) {
         apiKey = getinputtext(INPUT_API_KEY);
         serverAddress = getinputtext(INPUT_SERVER);
         if (apiKey == NULL || serverAddress == NULL || apiKey[0] == 0 || serverAddress[0] == 0) {
             sprintf(lastError, "error: missing api key or server");
             setoutputtext(DEBUG_URL, "");
             setoutputtext(DEBUG_RESPONSE, "");
+            fetchFailed = 1;
         } else if (pullPlan(serverAddress, apiKey)) {
-            ageSeconds = 0;
-        }
-        ticks = 1;
+            sinceFetch = 0;
+            fetchFailed = 0;
+        } else
+            fetchFailed = 1;
+        sinceAttempt = 0;
     }
     publishPlan();
-    ageSeconds = ageSeconds + 1;
+    sinceFetch = sinceFetch + 1;
+    sinceAttempt = sinceAttempt + 1;
     sleep(1000);
 }

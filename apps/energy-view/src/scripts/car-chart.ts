@@ -8,6 +8,7 @@ type CarPoint = {
   time: string;
   chargeKw: number | null;
   socPercent: number | null;
+  chargeLimitPercent: number | null;
   pluggedIn: boolean;
 };
 
@@ -20,6 +21,7 @@ type CarPlan = {
 type CarDayResponse = {
   configured: boolean;
   points: CarPoint[];
+  chargeLimitPercent?: number | null;
 };
 
 let chart: Chart | null = null;
@@ -28,6 +30,44 @@ let chart: Chart | null = null;
 function minutes(clock: string): number {
   const [hour, minute] = clock.split(":");
   return Number(hour) * 60 + Number(minute);
+}
+
+/* Today's date in Prague, as YYYY-MM-DD. */
+function pragueToday(): string {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Prague" }).format(new Date());
+}
+
+/* Minutes after midnight in Prague. */
+function pragueMinutesNow(): number {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Europe/Prague",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23"
+  }).formatToParts(new Date());
+  const hour = Number(parts.find((part) => part.type === "hour")?.value ?? 0);
+  const minute = Number(parts.find((part) => part.type === "minute")?.value ?? 0);
+  return hour * 60 + minute;
+}
+
+/* A quarter that has not started. A finished day has no open hours. */
+function isAhead(day: string, time: string): boolean {
+  if (day !== pragueToday())
+    return false;
+  return minutes(time) > pragueMinutesNow();
+}
+
+/* Carry the last known level into later quarters, and leave the rest of today empty. */
+function holdUntilNow(day: string, points: CarPoint[], read: (point: CarPoint) => number | null): Array<number | null> {
+  let held: number | null = null;
+  return points.map((point) => {
+    if (isAhead(day, point.time))
+      return null;
+    const next = read(point);
+    if (next !== null)
+      held = next;
+    return held;
+  });
 }
 
 /* True when this quarter sits inside the plan. A slot that passes midnight includes both ends. */
@@ -50,17 +90,17 @@ function emptyDay(): CarPoint[] {
     const total = index * 15;
     const hour = String(Math.floor(total / 60)).padStart(2, "0");
     const minute = String(total % 60).padStart(2, "0");
-    return { time: `${hour}:${minute}:00`, chargeKw: null, socPercent: null, pluggedIn: false };
+    return { time: `${hour}:${minute}:00`, chargeKw: null, socPercent: null, chargeLimitPercent: null, pluggedIn: false };
   });
 }
 
 /* Draw the car chart and the sentence under it. */
-function renderCarChart(points: CarPoint[], plan: CarPlan, configured: boolean): void {
+function renderCarChart(points: CarPoint[], plan: CarPlan, configured: boolean, chargeLimitPercent: number | null, day: string): void {
   const note = document.querySelector("#car-note");
   const canvas = document.querySelector("#car-chart") as HTMLCanvasElement | null;
   if (note)
     note.textContent = configured
-      ? "Obluda, the Tesla Model Y. Charging is power from the wallbox into the car. The other line is the usable state of charge. The step is plugged in. The dashed line is the plan."
+      ? "Obluda, the Tesla Model Y. Charging is power from the wallbox into the car. State of charge is the usable level, kept from the last reading. Charge limit is the level set now. The step is the cable, kept until the next drive. The limit and the cable stop at the present hour. The dashed power line is the plan."
       : "Obluda's history was not read. The dashed line is still the plan.";
   if (!canvas)
     return;
@@ -82,17 +122,32 @@ function renderCarChart(points: CarPoint[], plan: CarPlan, configured: boolean):
       stepped: true
     })
     : null;
+  const limits = points.map((point) => isAhead(day, point.time) ? null : point.chargeLimitPercent ?? chargeLimitPercent);
+  const limitLine = limits.some((value) => value !== null)
+    ? line("Charge limit", limits, "#b3261e", {
+      yAxisID: "y1",
+      borderDash: [4, 4]
+    })
+    : null;
+  const chargeKw = points.map((point) => {
+    if (!configured)
+      return point.chargeKw;
+    if (isAhead(day, point.time))
+      return null;
+    return point.chargeKw ?? 0;
+  });
   chart = new Chart(canvas, {
     type: "line",
     data: {
       labels,
       datasets: [
-        line("Charging", points.map((point) => point.chargeKw), "#006a6a", { stepped: true }),
-        line("State of charge", points.map((point) => point.socPercent), "#7d5260", {
+        line("Charging", chargeKw, "#006a6a", { stepped: true }),
+        line("State of charge", holdUntilNow(day, points, (point) => point.socPercent), "#7d5260", {
           yAxisID: "y1",
-          spanGaps: true
+          stepped: true
         }),
-        line("Plugged in", points.map((point) => point.pluggedIn ? 1 : 0), "#6750a4", {
+        ...(limitLine ? [limitLine] : []),
+        line("Plugged in", points.map((point) => isAhead(day, point.time) ? null : point.pluggedIn ? 1 : 0), "#6750a4", {
           yAxisID: "y2",
           stepped: true,
           borderWidth: 2
@@ -134,8 +189,8 @@ export async function loadCarChart(apiBase: string, apiKey: string, day: string,
       throw new Error("The car history was not read.");
     const body = await response.json() as CarDayResponse;
     const points = body.points.length > 0 ? body.points : emptyDay();
-    renderCarChart(points, plan, body.configured && body.points.length > 0);
+    renderCarChart(points, plan, body.configured && body.points.length > 0, body.chargeLimitPercent ?? null, day);
   } catch {
-    renderCarChart(emptyDay(), plan, false);
+    renderCarChart(emptyDay(), plan, false, null, day);
   }
 }

@@ -1,6 +1,9 @@
 /*
 Read one Prague day of Obluda from TeslaMate.
-Charging is wallbox power. The level is the usable state of charge. A charging process is the plug.
+Charging is wallbox power. The level is the usable state of charge.
+Plugged in is the cable: from the start of a charge until the next drive.
+The wallbox stopping the session does not count as unplugged.
+TeslaMate stores no history of the charge limit, so this query does not ask for it.
 */
 
 import pg from "pg";
@@ -51,25 +54,35 @@ const LEVEL_SQL = `
 
 const PLUG_SQL = `
   SELECT EXTRACT(EPOCH FROM (
-      GREATEST(start_date AT TIME ZONE 'UTC', $1::timestamp AT TIME ZONE 'Europe/Prague')
+      GREATEST(cp.start_date AT TIME ZONE 'UTC', $1::timestamp AT TIME ZONE 'Europe/Prague')
       - ($1::timestamp AT TIME ZONE 'Europe/Prague')
     )) / 60 AS from_minute,
     EXTRACT(EPOCH FROM (
       LEAST(
         COALESCE(
-          end_date,
-          (SELECT max(c.date) FROM charges c WHERE c.charging_process_id = charging_processes.id)
-        ) AT TIME ZONE 'UTC',
+          (
+            SELECT MIN(d.start_date) AT TIME ZONE 'UTC'
+            FROM drives d
+            WHERE d.car_id = cp.car_id
+              AND d.start_date > cp.start_date
+          ),
+          ($1::timestamp + interval '1 day') AT TIME ZONE 'Europe/Prague'
+        ),
         ($1::timestamp + interval '1 day') AT TIME ZONE 'Europe/Prague'
       ) - ($1::timestamp AT TIME ZONE 'Europe/Prague')
     )) / 60 AS to_minute
-  FROM charging_processes
-  WHERE car_id = 1
-    AND (start_date AT TIME ZONE 'UTC') < (($1::timestamp + interval '1 day') AT TIME ZONE 'Europe/Prague')
+  FROM charging_processes cp
+  WHERE cp.car_id = 1
+    AND (cp.start_date AT TIME ZONE 'UTC') < (($1::timestamp + interval '1 day') AT TIME ZONE 'Europe/Prague')
     AND COALESCE(
-      end_date,
-      (SELECT max(c.date) FROM charges c WHERE c.charging_process_id = charging_processes.id)
-    ) AT TIME ZONE 'UTC' > ($1::timestamp AT TIME ZONE 'Europe/Prague')
+      (
+        SELECT MIN(d.start_date) AT TIME ZONE 'UTC'
+        FROM drives d
+        WHERE d.car_id = cp.car_id
+          AND d.start_date > cp.start_date
+      ),
+      ($1::timestamp + interval '1 day') AT TIME ZONE 'Europe/Prague'
+    ) > ($1::timestamp AT TIME ZONE 'Europe/Prague')
 `;
 
 /* Open a pool when the TeslaMate database is configured. */
@@ -115,6 +128,7 @@ export async function readCarDay(query: CarDayQuery, date: string): Promise<CarP
       time: String(row.time),
       socPercent: Number(row.soc_percent)
     })),
+    limits: [],
     plugged: plugged.map((row) => ({
       fromMinute: Number(row.from_minute),
       toMinute: Number(row.to_minute)

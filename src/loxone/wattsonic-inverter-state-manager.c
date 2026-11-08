@@ -13,6 +13,15 @@
  20 seconds. Putting the 20% floor back immediately makes the inverter discharge
  what it just bought.
 
+ The upper half of the battery, above 50%, is for the car first and for
+ selling second. While the car may take that half and the battery is still
+ above 50%, the end-SOC floor is 50% so the charge stops there. Once the
+ battery is at 50% or below, the floor returns to VI16 and the house may use
+ it down to that reserve. A sale still stops at 50%.
+ A tank load, or a car charge bought from the grid, still lifts the floor to
+ the SOC at the start of that load. The grid covers it. When the load stops,
+ the floor returns to VI16.
+
  Inputs:
  - Input 1: Battery SOC
 
@@ -61,6 +70,7 @@ https://smarthome.exposed/wattsonic-hybrid-inverter-gen3-modbus-rtu-protocol
 #define PERIOD_START_MIDNIGHT 0
 #define PERIOD_STOP_END_OF_DAY 5947
 #define CHARGE_RELEASE_SECONDS 20
+#define UPPER_HALF_SOC 50.0
 
 // Constants for output indexes
 #define OUTPUT_MODE 0
@@ -82,10 +92,14 @@ https://smarthome.exposed/wattsonic-hybrid-inverter-gen3-modbus-rtu-protocol
 // Seconds left holding the end SOC below the battery after a grid charge.
 // The inverter keeps charging if this register is put straight back to the 20% floor.
 int chargeReleaseSeconds = 0;
+int batteryHoldActive = 0;
+float batteryHoldSoc = 0;
 
 // Virtual input connection addresses
 #define VI_ONGRID_SOC_PROTECTION_USER_SETTING "VI16"
 #define VI_PLAN_FRESH "VI9"
+#define VI_PLAN_TANK "VI10"
+#define VI_PLAN_CAR "VI18"
 #define VI_PLAN_BATTERY_CHARGE "VI20"
 #define VI_PLAN_BATTERY_KW "VI21"
 
@@ -153,7 +167,7 @@ void updateInverterState() {
         batteryMode = BATTERY_DISCHARGE_MODE;
         batteryChargeDischargePowerLimit = BATTERY_POWER_LIMIT_DISCHARGE_MAX;
         gridInjectionPowerLimit = GRID_INJECTION_POWER_LIMIT_MAX;
-        onGridEndSOCProtection = onGridEndSOCProtectionUserSetting;
+        onGridEndSOCProtection = UPPER_HALF_SOC;
         periodEnabled = 1;
         periodStart = PERIOD_START_MIDNIGHT;
         periodStop = PERIOD_STOP_END_OF_DAY;
@@ -173,6 +187,33 @@ void updateInverterState() {
         if (onGridEndSOCProtection < 10.0) onGridEndSOCProtection = 10.0;
         chargeReleaseSeconds = chargeReleaseSeconds - 1;
     }
+
+    // The car takes the stored half above 50%. A grid-bought car charge and the tank do not.
+    float planCarCommand = getio(VI_PLAN_CAR);
+    int carTakesUpperHalf = planFresh && !planOrdersCharge && planCarCommand >= 3;
+    int planCoversLoad = planFresh && !planOrdersCharge && getio(VI_PLAN_BATTERY_CHARGE) >= 0
+        && !carTakesUpperHalf
+        && ((planCarCommand >= 1 && planCarCommand < 3) || getio(VI_PLAN_TANK) >= 1);
+    if (carTakesUpperHalf) {
+        batteryHoldActive = 0;
+        if (soc > UPPER_HALF_SOC) {
+            onGridEndSOCProtection = UPPER_HALF_SOC;
+            sprintf(inverterState, "Car takes the upper half");
+        } else {
+            onGridEndSOCProtection = onGridEndSOCProtectionUserSetting;
+            sprintf(inverterState, "House uses the battery");
+        }
+    } else if (planCoversLoad) {
+        if (!batteryHoldActive) {
+            batteryHoldSoc = soc;
+            if (batteryHoldSoc < onGridEndSOCProtectionUserSetting)
+                batteryHoldSoc = onGridEndSOCProtectionUserSetting;
+            batteryHoldActive = 1;
+        }
+        onGridEndSOCProtection = batteryHoldSoc;
+        sprintf(inverterState, "Holding the battery");
+    } else
+        batteryHoldActive = 0;
 
     setoutput(OUTPUT_MODE, newMode);
     setoutput(OUTPUT_BATTERY_MODE, batteryMode);
@@ -194,12 +235,14 @@ void updateInverterState() {
     setoutputtext(TEXT_OUTPUT_INVERTER_STATE, inverterState);
 
     sprintf(inputs,
-            "SOC: %f\nBattery charge/discharge power limit: %d\nGrid injection power limit: %d\nOn-grid end SOC protection: %f\nPlan fresh: %d\nExcess energy available: %d\nPeriod enabled: %d\nPeriod start: %d\nPeriod stop: %d",
+            "SOC: %f\nBattery charge/discharge power limit: %d\nGrid injection power limit: %d\nOn-grid end SOC protection: %f\nPlan fresh: %d\nHold: %d at %f\nExcess energy available: %d\nPeriod enabled: %d\nPeriod start: %d\nPeriod stop: %d",
             soc,
             batteryChargeDischargePowerLimit,
             gridInjectionPowerLimit,
             onGridEndSOCProtection,
             planFresh,
+            batteryHoldActive,
+            batteryHoldSoc,
             excessEnergyAvailable,
             periodEnabled,
             periodStart,

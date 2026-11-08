@@ -76,10 +76,44 @@ void test_grid_charge_writes_period_clock_before_power_limit() {
     printf("PASS: grid charge writes the period clock before the power limit\n");
 }
 
+/*
+ * Verifies that a planned car or tank load holds the battery instead of emptying it.
+ */
+void test_car_or_tank_holds_the_battery() {
+    char* source = read_file(WATTSONIC_STATE_MANAGER_PATH);
+    char* hold = strstr(source, "sprintf(inverterState, \"Holding the battery\")");
+    assert(hold != NULL);
+    assert(strstr(source, "planCarCommand >= 1") != NULL);
+    assert(strstr(source, "getio(VI_PLAN_TANK) >= 1") != NULL);
+    assert(strstr(source, "onGridEndSOCProtection = batteryHoldSoc") != NULL);
+    assert(strstr(source, "onGridEndSOCProtection = batteryHoldSoc") < hold);
+    free(source);
+    printf("PASS: car or tank load holds the battery\n");
+}
+
+/*
+ * Verifies that the car may spend the stored half above 50%, and a sale stops there too.
+ */
+void test_upper_half_goes_to_the_car_or_the_sale() {
+    char* source = read_file(WATTSONIC_STATE_MANAGER_PATH);
+    char* car = strstr(source, "sprintf(inverterState, \"Car takes the upper half\")");
+    assert(car != NULL);
+    assert(strstr(source, "planCarCommand >= 3") != NULL);
+    assert(strstr(source, "soc > UPPER_HALF_SOC") != NULL);
+    assert(strstr(source, "onGridEndSOCProtection = UPPER_HALF_SOC") != NULL);
+    assert(strstr(source, "onGridEndSOCProtection = UPPER_HALF_SOC") < car);
+    assert(strstr(source, "sprintf(inverterState, \"House uses the battery\")") != NULL);
+    assert(strstr(source, "onGridEndSOCProtection = onGridEndSOCProtectionUserSetting") != NULL);
+    free(source);
+    printf("PASS: the upper half goes to the car or the sale\n");
+}
+
 int main() {
     printf("Running Wattsonic inverter state manager tests...\n");
     test_discharge_to_grid_requires_push_price_threshold();
     test_grid_charge_writes_period_clock_before_power_limit();
+    test_car_or_tank_holds_the_battery();
+    test_upper_half_goes_to_the_car_or_the_sale();
     printf("All Wattsonic inverter state manager tests passed.\n");
     return 0;
 }

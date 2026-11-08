@@ -16,6 +16,7 @@ export type EnergyPoint = {
   batteryKw: number | null;
   socPercent: number | null;
   heatingOn: boolean | null;
+  tankTemperatureC: number | null;
 };
 
 /* Clock HH:MM or HH:MM:SS to minutes after midnight. */
@@ -55,18 +56,52 @@ function quarterIndex(clock: string): number {
   return Math.floor(clockSeconds(clock) / 900);
 }
 
-/* HH:MM from a price interval, as a clock with seconds. */
+/* The latest stored tank temperature in the same quarter, if one exists. */
+function temperatureAt(clock: string, temperatures: { time: string; temperatureC: number }[]): number | null {
+  const slot = quarterIndex(clock);
+  let best: { at: number; temperatureC: number } | null = null;
+  for (const reading of temperatures) {
+    if (quarterIndex(reading.time) !== slot)
+      continue;
+    const at = clockSeconds(reading.time);
+    if (!best || at >= best.at)
+      best = { at, temperatureC: reading.temperatureC };
+  }
+  return best ? best.temperatureC : null;
+}
+
+/* HH:MM:SS from a price interval. */
 function quarterClock(periodInterval: string): string {
   return `${periodInterval.slice(0, 5)}:00`;
 }
 
-/* One point per price quarter. Samples keep their own times and fill the quarter they fall in. */
+/* Clock times for the tank temperature: each stored reading, and the ends of older heater runs. */
+export function tankTemperatureClocks(
+  samples: { at: string; temperatureC: number }[],
+  periods: HeatingPeriod[],
+  date: string
+): { time: string; temperatureC: number }[] {
+  const ends = periods.flatMap((period) => {
+    const points: { time: string; temperatureC: number }[] = [];
+    if (period.startedAt.startsWith(date))
+      points.push({ time: period.startedAt.slice(11), temperatureC: period.startTemperatureC });
+    if (period.endedAt?.startsWith(date) && period.endTemperatureC !== null)
+      points.push({ time: period.endedAt.slice(11), temperatureC: period.endTemperatureC });
+    return points;
+  });
+  const readings = samples
+    .filter((sample) => sample.at.startsWith(date))
+    .map((sample) => ({ time: sample.at.slice(11), temperatureC: sample.temperatureC }));
+  return [...ends, ...readings];
+}
 export function alignEnergyDay(input: {
   date: string;
   prices: SpotPrice[];
   samples: PowerSample[];
   heating: HeatingPeriod[];
+  temperatures?: { time: string; temperatureC: number }[];
 }): EnergyPoint[] {
+  const temperatures = input.temperatures ?? [];
   const measured = input.samples.map((sample) => ({
     time: sample.time,
     priceEurPerMwh: priceAt(input.prices, sample.time),
@@ -74,7 +109,8 @@ export function alignEnergyDay(input: {
     meterKw: sample.meterKw,
     batteryKw: sample.batteryKw,
     socPercent: sample.socPercent,
-    heatingOn: heatingOnAt(input.heating, input.date, sample.time)
+    heatingOn: heatingOnAt(input.heating, input.date, sample.time),
+    tankTemperatureC: temperatureAt(sample.time, temperatures)
   }));
   if (input.prices.length === 0)
     return measured;
@@ -96,7 +132,8 @@ export function alignEnergyDay(input: {
       meterKw: null,
       batteryKw: null,
       socPercent: null,
-      heatingOn: stillAhead ? null : heatingOnAt(input.heating, input.date, time)
+      heatingOn: stillAhead ? null : heatingOnAt(input.heating, input.date, time),
+      tankTemperatureC: temperatureAt(time, temperatures)
     }];
   });
 

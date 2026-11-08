@@ -7,6 +7,7 @@ export type CarPoint = {
   time: string;
   chargeKw: number | null;
   socPercent: number | null;
+  chargeLimitPercent: number | null;
   pluggedIn: boolean;
 };
 
@@ -31,15 +32,18 @@ function quarterClock(index: number): string {
   return `${hour}:${minute}:00`;
 }
 
-/* Place charge peaks, the latest state of charge, and plug windows onto the 96 quarters. */
+/* Place charge peaks, the latest state of charge, the charge limit, and plug windows onto the 96 quarters. */
 export function buildCarDay(input: {
   charges: { time: string; chargeKw: number }[];
   levels: { time: string; socPercent: number }[];
+  limits: { time: string; limitPercent: number }[];
   plugged: { fromMinute: number; toMinute: number }[];
 }): CarPoint[] {
   const chargeKw = Array.from({ length: QUARTERS }, () => null as number | null);
   const socPercent = Array.from({ length: QUARTERS }, () => null as number | null);
   const socAt = Array.from({ length: QUARTERS }, () => -1);
+  const chargeLimitPercent = Array.from({ length: QUARTERS }, () => null as number | null);
+  const limitAt = Array.from({ length: QUARTERS }, () => -1);
   const pluggedIn = Array.from({ length: QUARTERS }, () => false);
 
   for (const charge of input.charges) {
@@ -55,6 +59,21 @@ export function buildCarDay(input: {
       socPercent[index] = level.socPercent;
     }
   }
+  for (const limit of input.limits) {
+    const index = quarterIndex(limit.time);
+    const at = minutes(limit.time);
+    if (at >= limitAt[index]) {
+      limitAt[index] = at;
+      chargeLimitPercent[index] = limit.limitPercent;
+    }
+  }
+  let carriedLimit: number | null = null;
+  for (let index = 0; index < QUARTERS; index += 1) {
+    if (chargeLimitPercent[index] !== null)
+      carriedLimit = chargeLimitPercent[index];
+    else if (carriedLimit !== null)
+      chargeLimitPercent[index] = carriedLimit;
+  }
   for (const window of input.plugged) {
     for (let index = 0; index < QUARTERS; index += 1) {
       const start = index * 15;
@@ -68,6 +87,7 @@ export function buildCarDay(input: {
     time: quarterClock(index),
     chargeKw: chargeKw[index],
     socPercent: socPercent[index],
+    chargeLimitPercent: chargeLimitPercent[index],
     pluggedIn: pluggedIn[index]
   }));
 }

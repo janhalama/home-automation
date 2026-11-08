@@ -9,9 +9,9 @@ import { carJobFromReading, type CarReading } from "../services/car-energy.js";
 import { buildEnergyPlan, formatEnergyPlan } from "../services/energy-plan.js";
 import type { FetchImpl } from "../services/forecast-solar-client.js";
 import type { HouseArchive } from "../services/house-archive.js";
-import { pragueTimestamp } from "../services/house-collector.js";
+import { pragueDate, pragueTimestamp } from "../services/house-collector.js";
 import { fetchMorningLowCloud } from "../services/open-meteo-cloud-client.js";
-import { seasonOf } from "../services/seasonal-profile.js";
+import { cloudBand, expectedPvKwh, seasonOf } from "../services/seasonal-profile.js";
 
 const HOUSE = { lat: 50.6920036, lon: 15.2203556 };
 const BATTERY_KWH = 19;
@@ -45,6 +45,24 @@ function socPercentFor(archive: HouseArchive, date: string): number | null {
   if (sameDay)
     return sameDay.socPercent;
   return archive.latestPowerSampleBefore(date)?.socPercent ?? null;
+}
+
+/* Prague HH:MM. The car slot starts after this clock. */
+function pragueClock(now: Date): string {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Europe/Prague",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23"
+  }).formatToParts(now);
+  const hour = parts.find((part) => part.type === "hour")?.value ?? "00";
+  const minute = parts.find((part) => part.type === "minute")?.value ?? "00";
+  return `${hour}:${minute}`;
+}
+
+/* Energy already produced today. Each stored sample stands for one quarter-hour. */
+function producedPvKwh(samples: { pvKw: number }[]): number {
+  return samples.reduce((sum, sample) => sum + Math.max(0, sample.pvKw) * 0.25, 0);
 }
 
 /* Kilowatt-hours already stored above the 20% floor. */
@@ -93,13 +111,29 @@ export function registerEnergyPlanRoute(app: FastifyInstance, deps: EnergyPlanDe
         }
       }
       const lowCloud = await fetchMorningLowCloud(HOUSE.lat, HOUSE.lon, date, deps.fetchImpl);
+      const season = seasonOf(date);
+      const expectedPv = lowCloud === null ? null : expectedPvKwh(season, cloudBand(lowCloud));
+      const pvRemainingKwh = expectedPv === null
+        ? null
+        : Math.max(0, expectedPv - producedPvKwh(deps.archive.listPowerSamples(date)));
+      const today = pragueTimestamp(new Date()).slice(0, 10);
+      const tomorrowDate = pragueDate(new Date(), 1);
+      const tomorrowCloud = date === today
+        ? await fetchMorningLowCloud(HOUSE.lat, HOUSE.lon, tomorrowDate, deps.fetchImpl)
+        : null;
+      const tomorrowPvKwh = tomorrowCloud === null ? null : expectedPvKwh(seasonOf(tomorrowDate), cloudBand(tomorrowCloud));
       const heating = deps.archive.latestHeating();
       const plan = buildEnergyPlan({
         prices,
+        tomorrowPrices: date === today ? deps.archive.listSpotPrices(pragueDate(new Date(), 1)) : [],
+        startAt: date === today ? pragueClock(new Date()) : null,
         bottomTemperatureC: heating?.temperatureC ?? null,
         aboveFloorKwh: aboveFloorKwh(socPercentFor(deps.archive, date)),
-        season: seasonOf(date),
+        socPercent: socPercentFor(deps.archive, date),
+        season,
         lowCloudPercent: lowCloud,
+        pvRemainingKwh,
+        tomorrowPvKwh: date === today ? tomorrowPvKwh : null,
         car
       });
       reply.status(200).type("text/plain; charset=utf-8").send(formatEnergyPlan(plan));

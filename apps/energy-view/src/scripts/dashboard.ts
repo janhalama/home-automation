@@ -2,8 +2,7 @@
 Loads one day and the live forecast from the energy API and draws them.
 */
 
-import { Chart, type ChartDataset } from "chart.js/auto";
-import { loadCarChart } from "./car-chart.ts";
+import { renderDayRows } from "./day-rows.ts";
 
 type EnergyPoint = {
   time: string;
@@ -13,6 +12,7 @@ type EnergyPoint = {
   batteryKw: number | null;
   socPercent: number | null;
   heatingOn: boolean | null;
+  tankTemperatureC?: number | null;
 };
 
 type DayScore = {
@@ -56,6 +56,7 @@ type LiveResponse = {
 };
 
 type DayPlan = {
+  car: string;
   tankFrom: string | null;
   tankTo: string | null;
   carFrom: string | null;
@@ -64,6 +65,9 @@ type DayPlan = {
   batteryFrom: string | null;
   batteryTo: string | null;
   batteryKw: number;
+  batterySellFrom: string | null;
+  batterySellTo: string | null;
+  batterySellKw: number;
   batteryDischargeFrom: string | null;
   batteryDischargeTo: string | null;
   batteryDischargeKw: number;
@@ -95,26 +99,6 @@ async function loadJson<T>(apiBase: string, apiKey: string, path: string): Promi
   return body;
 }
 
-/* Clock HH:MM or HH:MM:SS to minutes after midnight. */
-function minutes(clock: string): number {
-  const [hour, minute] = clock.split(":");
-  return Number(hour) * 60 + Number(minute);
-}
-
-/* True when this sample sits inside a plan slot. A slot that passes midnight includes both ends. The end minute is excluded. */
-function inSlot(time: string, from: string | null, to: string | null): boolean {
-  if (!from || !to)
-    return false;
-  const at = minutes(time);
-  const start = minutes(from);
-  const end = minutes(to);
-  if (start === end)
-    return false;
-  if (end > start)
-    return at >= start && at < end;
-  return at >= start || at < end;
-}
-
 /* Read the plain-text plan. An error body means there is nothing to draw. */
 function parsePlan(text: string): DayPlan | null {
   if (text.startsWith("error="))
@@ -127,12 +111,16 @@ function parsePlan(text: string): DayPlan | null {
   return {
     tankFrom: clock("tankFrom"),
     tankTo: clock("tankTo"),
+    car: values.get("car") ?? "",
     carFrom: clock("carFrom"),
     carTo: clock("carTo"),
     carKw: Number(values.get("carKw") ?? 0),
     batteryFrom: clock("batteryFrom"),
     batteryTo: clock("batteryTo"),
     batteryKw: Number(values.get("batteryKw") ?? 0),
+    batterySellFrom: clock("batterySellFrom"),
+    batterySellTo: clock("batterySellTo"),
+    batterySellKw: Number(values.get("batterySellKw") ?? 0),
     batteryDischargeFrom: clock("batteryDischargeFrom"),
     batteryDischargeTo: clock("batteryDischargeTo"),
     batteryDischargeKw: Number(values.get("batteryDischargeKw") ?? 0)
@@ -152,6 +140,19 @@ async function loadPlan(apiBase: string, apiKey: string, day: string): Promise<D
 /* Today's date in Prague, as YYYY-MM-DD. */
 function pragueToday(): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Prague" }).format(new Date());
+}
+
+/* Minutes after midnight in Prague. */
+function pragueMinutesNow(): number {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Europe/Prague",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23"
+  }).formatToParts(new Date());
+  const hour = Number(parts.find((part) => part.type === "hour")?.value ?? "0");
+  const minute = Number(parts.find((part) => part.type === "minute")?.value ?? "0");
+  return hour * 60 + minute;
 }
 
 /* Move a YYYY-MM-DD by whole calendar days. */
@@ -198,10 +199,19 @@ function renderPlanLine(plan: DayPlan | null): void {
   const discharge = plan.batteryDischargeFrom && plan.batteryDischargeTo
     ? `Battery covers the house ${plan.batteryDischargeFrom}–${plan.batteryDischargeTo} at ${plan.batteryDischargeKw.toFixed(2)} kW`
     : "No battery discharge";
+  const carText = plan.car === "battery"
+    ? `Obluda takes the house battery at ${plan.carKw.toFixed(0)} kW, more when the sun covers it, down to 50%${plan.carFrom && plan.carTo ? `, about ${plan.carFrom}–${plan.carTo}` : ""}`
+    : plan.car === "surplus"
+      ? "Obluda takes leftover sun while the battery is above 30%"
+      : slot("Obluda", plan.carFrom, plan.carTo, ` at ${plan.carKw.toFixed(0)} kW`);
+  const sale = plan.batterySellFrom && plan.batterySellTo
+    ? `Battery sale ${plan.batterySellFrom}–${plan.batterySellTo} at ${plan.batterySellKw.toFixed(0)} kW, down to 50%`
+    : "Battery sale off";
   line.textContent = [
     slot("Tank plan", plan.tankFrom, plan.tankTo),
-    slot("Obluda", plan.carFrom, plan.carTo, ` at ${plan.carKw.toFixed(0)} kW`),
+    carText,
     charge,
+    sale,
     discharge
   ].join(". ") + ".";
 }
@@ -273,166 +283,25 @@ function renderLive(live: LiveResponse): void {
   root.innerHTML = [
     stat("FVE today", live.todayKwh === null ? "unknown" : `${live.todayKwh.toFixed(1)} kWh`),
     stat("FVE tomorrow", live.tomorrowKwh === null ? "unknown" : `${live.tomorrowKwh.toFixed(1)} kWh`),
-    stat("Heater", heating),
+    stat("Heater now", heating),
     stat("Tank", temperature),
     stat("Price now", price)
   ].join("");
 }
 
-/* Shared chart appearance. */
-function chartOptions(yLabel: string) {
-  return {
-    responsive: true,
-    maintainAspectRatio: false,
-    animation: false,
-    interaction: { mode: "index" as const, intersect: false },
-    plugins: { legend: { position: "bottom" as const } },
-    scales: {
-      x: { ticks: { maxTicksLimit: 8 } },
-      y: { title: { display: true, text: yLabel } }
-    }
-  };
-}
-
-/* Draw the three charts for the loaded day. The plan is a band on the price and a dashed power. */
-function renderCharts(points: EnergyPoint[], plan: DayPlan | null): void {
-  charts.forEach((chart) => chart.destroy());
-  charts.length = 0;
-  const labels = points.map((point) => point.time.slice(0, 5));
-  const price = document.querySelector("#price-chart") as HTMLCanvasElement | null;
-  const power = document.querySelector("#power-chart") as HTMLCanvasElement | null;
-  const soc = document.querySelector("#soc-chart") as HTMLCanvasElement | null;
-  if (!price || !power || !soc)
-    return;
-
-  const line = (label: string, data: Array<number | null>, color: string, extra: Partial<ChartDataset> = {}) => ({
-    label,
-    data,
-    borderColor: color,
-    backgroundColor: color,
-    pointRadius: 0,
-    tension: 0.2,
-    spanGaps: true,
-    ...extra
-  });
-
-  const band = (label: string, from: string | null, to: string | null, color: string) => {
-    if (!from || !to)
-      return null;
-    return line(label, points.map((point) => inSlot(point.time, from, to) ? point.priceEurPerMwh : null), color, {
-      backgroundColor: color,
-      borderWidth: 0,
-      fill: "origin",
-      spanGaps: false,
-      stepped: true
+/* The car's charging power for the day. A failure leaves that row empty. */
+async function loadCarPoints(apiBase: string, apiKey: string, day: string): Promise<{ time: string; chargeKw: number | null }[]> {
+  try {
+    const response = await fetch(`${apiBase}/api/energy/car?date=${day}`, {
+      headers: { "X-API-Key": apiKey }
     });
-  };
-  const priceStroke = (label: string, from: string | null, to: string | null, color: string) => {
-    if (!from || !to)
-      return null;
-    return line(label, points.map((point) => inSlot(point.time, from, to) ? point.priceEurPerMwh : null), color, {
-      borderWidth: 3,
-      borderDash: [8, 4],
-      fill: false,
-      spanGaps: false,
-      stepped: true
-    });
-  };
-  const plannedKw = (label: string, from: string | null, to: string | null, kw: number, color: string) => {
-    if (!from || !to || kw === 0)
-      return null;
-    return line(label, points.map((point) => inSlot(point.time, from, to) ? kw : null), color, {
-      borderDash: [6, 4],
-      spanGaps: false,
-      stepped: true
-    });
-  };
-  const present = <T,>(items: Array<T | null>): T[] => items.filter((item): item is T => item !== null);
-
-  charts.push(new Chart(price, {
-    type: "line",
-    data: {
-      labels,
-      datasets: present([
-        line("Price", points.map((point) => point.priceEurPerMwh), "#6750a4"),
-        band("Tank plan", plan?.tankFrom ?? null, plan?.tankTo ?? null, "rgba(179, 38, 30, 0.35)"),
-        band("Battery charge", plan?.batteryFrom ?? null, plan?.batteryTo ?? null, "rgba(125, 82, 96, 0.28)"),
-        priceStroke("Obluda", plan?.carFrom ?? null, plan?.carTo ?? null, "#006a6a"),
-        line("Heater", points.map((point) => point.heatingOn === null ? null : point.heatingOn ? 1 : 0), "#b3261e", {
-          stepped: true,
-          spanGaps: false,
-          yAxisID: "y1"
-        })
-      ])
-    },
-    options: {
-      ...chartOptions("EUR/MWh"),
-      scales: {
-        x: { ticks: { maxTicksLimit: 8 } },
-        y: { title: { display: true, text: "EUR/MWh" } },
-        y1: { position: "right", min: 0, max: 1, ticks: { stepSize: 1 }, grid: { drawOnChartArea: false }, title: { display: true, text: "Heater" } }
-      }
-    }
-  }));
-
-  const chargingAt = (time: string) =>
-    plan !== null && inSlot(time, plan.batteryFrom, plan.batteryTo) && plan.batteryKw !== 0;
-  const batteryCharge = plan && plan.batteryKw !== 0
-    ? line("Battery charge", points.map((point) => chargingAt(point.time) ? -plan.batteryKw : null), "#7d5260", {
-      borderDash: [6, 4],
-      spanGaps: false,
-      stepped: true
-    })
-    : null;
-  const batteryDischarge = plan && plan.batteryDischargeKw !== 0
-    ? line("Battery discharge", points.map((point) => {
-      if (chargingAt(point.time) || !inSlot(point.time, plan.batteryDischargeFrom, plan.batteryDischargeTo))
-        return null;
-      return plan.batteryDischargeKw;
-    }), "#8a5a00", {
-      borderDash: [6, 4],
-      spanGaps: false,
-      stepped: true
-    })
-    : null;
-
-  charts.push(new Chart(power, {
-    type: "line",
-    data: {
-      labels,
-      datasets: present([
-        line("PV", points.map((point) => point.pvKw), "#386a20"),
-        line("Grid", points.map((point) => point.meterKw), "#006a6a"),
-        line("Battery", points.map((point) => point.batteryKw), "#7d5260"),
-        plannedKw("Tank plan", plan?.tankFrom ?? null, plan?.tankTo ?? null, 2.5, "#b3261e"),
-        plannedKw("Obluda", plan?.carFrom ?? null, plan?.carTo ?? null, plan?.carKw ?? 0, "#006a6a"),
-        batteryCharge,
-        batteryDischarge
-      ])
-    },
-    options: chartOptions("kW")
-  }));
-
-  charts.push(new Chart(soc, {
-    type: "line",
-    data: {
-      labels,
-      datasets: present([
-        line("State of charge", points.map((point) => point.socPercent), "#1d192b"),
-        line("Floor", points.map(() => 20), "#b3261e", { borderDash: [4, 4] }),
-        batteryCharge ? { ...batteryCharge, yAxisID: "y1" } : null,
-        batteryDischarge ? { ...batteryDischarge, yAxisID: "y1" } : null
-      ])
-    },
-    options: {
-      ...chartOptions("%"),
-      scales: {
-        x: { ticks: { maxTicksLimit: 8 } },
-        y: { position: "left", title: { display: true, text: "%" } },
-        y1: { position: "right", grid: { drawOnChartArea: false }, title: { display: true, text: "Plan kW" } }
-      }
-    }
-  }));
+    if (!response.ok)
+      return [];
+    const body = await response.json() as { points?: { time: string; chargeKw: number | null }[] };
+    return body.points ?? [];
+  } catch {
+    return [];
+  }
 }
 
 /* Load the live state and the selected day. */
@@ -446,18 +315,26 @@ async function loadDay(event?: Event): Promise<void> {
   if (status)
     status.textContent = "Loading…";
   try {
-    const [live, series, plan] = await Promise.all([
+    const [live, series, plan, car] = await Promise.all([
       loadJson<LiveResponse>(apiBase, apiKey, "/api/energy/live"),
       loadJson<SeriesResponse>(apiBase, apiKey, `/api/energy/series?date=${day}`),
-      loadPlan(apiBase, apiKey, day)
+      loadPlan(apiBase, apiKey, day),
+      loadCarPoints(apiBase, apiKey, day)
     ]);
     renderLive(live);
     renderScores(series);
     const hasReality = series.points.some((point) => point.pvKw !== null || point.meterKw !== null);
     renderDayLabel(day, hasReality);
     renderPlanLine(plan);
-    renderCharts(series.points, plan);
-    await loadCarChart(apiBase, apiKey, day, plan);
+    const rows = document.querySelector("#day-rows");
+    if (rows)
+      renderDayRows(rows as HTMLElement, {
+        points: series.points.map((point) => ({ ...point, tankTemperatureC: point.tankTemperatureC ?? null })),
+        plan,
+        car,
+        forecastKwh: day === pragueToday() ? live.todayKwh : null,
+        recordedUntilMinute: day === pragueToday() ? pragueMinutesNow() : null
+      });
     const missing = series.points.length === 0
       ? "This day has no prices yet, so there is no plan to draw."
       : hasReality ? "" : "The plan is drawn. Measurements appear as the day is sampled.";

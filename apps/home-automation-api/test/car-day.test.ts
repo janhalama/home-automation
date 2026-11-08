@@ -17,12 +17,19 @@ describe("car day", () => {
         { time: "10:01:00", socPercent: 40 },
         { time: "10:10:00", socPercent: 38 }
       ],
-      plugged: [{ fromMinute: 20 * 60 + 17, toMinute: 20 * 60 + 18 }]
+      plugged: [{ fromMinute: 20 * 60 + 17, toMinute: 20 * 60 + 18 }],
+      limits: [
+        { time: "20:17:00", limitPercent: 50 },
+        { time: "21:05:00", limitPercent: 80 }
+      ]
     });
 
     const charge = points.find((point) => point.time === "20:15:00");
     const level = points.find((point) => point.time === "10:00:00");
-    expect(charge).toMatchObject({ chargeKw: 11, pluggedIn: true });
+    expect(charge).toMatchObject({ chargeKw: 11, pluggedIn: true, chargeLimitPercent: 50 });
+    expect(points.find((point) => point.time === "21:00:00")?.chargeLimitPercent).toBe(80);
+    expect(points.find((point) => point.time === "22:00:00")?.chargeLimitPercent).toBe(80);
+    expect(points.find((point) => point.time === "19:00:00")?.chargeLimitPercent).toBeNull();
     expect(level?.socPercent).toBe(38);
     expect(points).toHaveLength(96);
     expect(points[0]).toMatchObject({ time: "00:00:00", chargeKw: null, socPercent: null, pluggedIn: false });
@@ -30,7 +37,9 @@ describe("car day", () => {
 
   it("reads charge, level, and plug rows without asking for a location", async () => {
     const query: CarDayQuery = async (text) => {
-      expect(text).not.toMatch(/latitude|longitude/);
+      expect(text).not.toMatch(/latitude|longitude|charge_limit_soc/);
+      if (text.includes("from_minute"))
+        expect(text).toMatch(/FROM drives d/);
       if (text.includes("charger_power"))
         return [{ time: "02:10:00", charge_kw: 11 }];
       if (text.includes("usable_battery_level"))
@@ -41,8 +50,10 @@ describe("car day", () => {
     const points = await readCarDay(query, "2026-10-28");
     expect(points.find((point) => point.time === "02:00:00")).toMatchObject({
       chargeKw: 11,
-      pluggedIn: true
+      pluggedIn: true,
+      chargeLimitPercent: null
     });
+    expect(points.find((point) => point.time === "03:00:00")?.chargeLimitPercent).toBeNull();
     expect(points.find((point) => point.time === "08:00:00")?.socPercent).toBe(54);
   });
 });

@@ -10,6 +10,7 @@ import type { CarPoint } from "../services/car-day.js";
 export type CarDayRouteDeps = {
   apiKey: string;
   readCarDay: ((date: string) => Promise<CarPoint[]>) | null;
+  readChargeLimit: (() => Promise<number | null>) | null;
 };
 
 /* Refuse a call that has no server key or the wrong client key. */
@@ -25,6 +26,18 @@ function rejectUnauthorized(apiKey: string, request: FastifyRequest, reply: Fast
     return true;
   }
   return false;
+}
+
+/* The current charge limit. A failed reading leaves the history on the chart. */
+async function readTodayLimit(readChargeLimit: (() => Promise<number | null>) | null): Promise<number | null> {
+  if (!readChargeLimit)
+    return null;
+  try {
+    const limitPercent = await readChargeLimit();
+    return Number.isFinite(limitPercent) ? limitPercent : null;
+  } catch {
+    return null;
+  }
 }
 
 /* Register the car chart series. */
@@ -48,14 +61,17 @@ export function registerCarDayRoute(app: FastifyInstance, deps: CarDayRouteDeps)
         return;
       }
       if (!deps.readCarDay) {
-        reply.status(200).send({ date, configured: false, points: [] });
+        reply.status(200).send({ date, configured: false, points: [], chargeLimitPercent: null });
         return;
       }
       try {
         const points = await deps.readCarDay(date);
-        reply.status(200).send({ date, configured: true, points });
-      } catch {
-        reply.status(200).send({ date, configured: false, points: [] });
+        const today = pragueTimestamp(new Date()).slice(0, 10);
+        const chargeLimitPercent = date === today ? await readTodayLimit(deps.readChargeLimit) : null;
+        reply.status(200).send({ date, configured: true, points, chargeLimitPercent });
+      } catch (error) {
+        request.log.error({ err: error }, "car history was not read");
+        reply.status(200).send({ date, configured: false, points: [], chargeLimitPercent: null });
       }
     }
   });
