@@ -4,6 +4,7 @@ Price and sun are what drive the plan. Then each job shows the plan and what hap
 */
 
 import { Chart, type ChartDataset } from "chart.js/auto";
+import { batteryPlanKw, batteryPlanTitle } from "./battery-plan-series.ts";
 
 export type RowPoint = {
   time: string;
@@ -29,6 +30,13 @@ export type RowPlan = {
   batterySellFrom: string | null;
   batterySellTo: string | null;
   batterySellKw: number;
+  reserveSoc: number | null;
+};
+
+export type SunCoverPoint = {
+  time: string;
+  pvKw: number;
+  houseKw: number;
 };
 
 export type CarQuarter = {
@@ -43,9 +51,28 @@ type RowSeries = {
   dashed?: boolean;
   spanGaps?: boolean;
   signed?: boolean;
+  trade?: boolean;
 };
 
+const BUY = "#386a20";
+const SELL = "#b3261e";
+const BUY_FILL = "rgba(56, 106, 32, 0.35)";
+const SELL_FILL = "rgba(179, 38, 30, 0.35)";
+
+/* Green on a buy, red on a sale. The grid row keeps red for import. */
+function tradeStroke(item: RowSeries, start: number, end: number): string {
+  const buying = item.trade ? BUY : SELL;
+  const selling = item.trade ? SELL : BUY;
+  if (start < 0 && end <= 0)
+    return buying;
+  if (start > 0 && end >= 0)
+    return selling;
+  return item.color;
+}
+
 const charts: Chart[] = [];
+const CZK_PER_EUR = 25;
+const SALE_GAP_CZK = 3;
 
 /* Quarter labels from 00:00 through 24:00. The last label closes the 23:45 quarter. */
 function axis(): string[] {
@@ -55,6 +82,16 @@ function axis(): string[] {
     const minute = String(total % 60).padStart(2, "0");
     return `${hour}:${minute}`;
   });
+}
+
+/* Day's low, high, and the Kč gap a sale needs. A sale wants at least 3 Kč/kWh. */
+function priceSpread(prices: Array<number | null>): { low: number; high: number; gapCzk: number } | null {
+  const known = prices.filter((price): price is number => price !== null);
+  if (known.length === 0)
+    return null;
+  const low = Math.min(...known);
+  const high = Math.max(...known);
+  return { low, high, gapCzk: (high - low) * CZK_PER_EUR / 1000 };
 }
 
 /* Copy the 23:45 value out to midnight so that quarter has a segment. */
@@ -107,6 +144,40 @@ function indexByQuarter<T extends { time: string }>(points: T[]): Map<string, T>
   return map;
 }
 
+/* A slot that finishes before now is tomorrow morning, so it is not drawn on the rest of today. */
+function slotIsAhead(from: string, to: string, recordedUntil: number): boolean {
+  const start = minutes(from);
+  const end = minutes(to);
+  if (end <= start)
+    return true;
+  return end > recordedUntil;
+}
+
+/* Tank plan the row titles. A passed window stays the morning one. */
+function tankPlanForChart(live: RowPlan | null, opening: RowPlan | null, recordedUntil: number | null): RowPlan | null {
+  if (recordedUntil === null)
+    return opening ?? live;
+  if (live?.tankFrom && live.tankTo && slotIsAhead(live.tankFrom, live.tankTo, recordedUntil))
+    return live;
+  return opening ?? live;
+}
+
+/* 1 while this quarter is in the tank plan that belongs on this part of the day. */
+function tankPlanOn(
+  time: string,
+  live: RowPlan | null,
+  opening: RowPlan | null,
+  recordedUntil: number | null
+): number | null {
+  const past = recordedUntil !== null && minutes(time) < recordedUntil;
+  const source = past ? (opening ?? live) : tankPlanForChart(live, opening, recordedUntil);
+  if (!source?.tankFrom || !source.tankTo)
+    return null;
+  if (!past && recordedUntil !== null && !slotIsAhead(source.tankFrom, source.tankTo, recordedUntil))
+    return 0;
+  return inSlot(time, source.tankFrom, source.tankTo) ? 1 : 0;
+}
+
 /* Plan value during the slot, zero outside it, empty when the plan has no hours. */
 function slotLine(labels: string[], from: string | null, to: string | null, value: number): Array<number | null> {
   if (!from || !to)
@@ -141,18 +212,20 @@ function addRow(host: HTMLElement, title: string, labels: string[], unit: string
         tension: 0,
         spanGaps: item.spanGaps ?? false,
         stepped: "after",
-        fill: item.signed ? { target: "origin", above: "rgba(56, 106, 32, 0.35)", below: "rgba(179, 38, 30, 0.35)" } : false,
-        segment: item.signed ? {
+        fill: item.signed || item.trade
+          ? {
+              target: "origin",
+              above: item.trade ? SELL_FILL : BUY_FILL,
+              below: item.trade ? BUY_FILL : SELL_FILL
+            }
+          : false,
+        segment: item.signed || item.trade ? {
           borderColor: (context) => {
             const start = context.p0.parsed.y;
             const end = context.p1.parsed.y;
             if (start === null || end === null)
               return item.color;
-            if (start < 0 && end <= 0)
-              return "#b3261e";
-            if (start > 0 && end >= 0)
-              return "#386a20";
-            return item.color;
+            return tradeStroke(item, start, end);
           }
         } : undefined
       }))
@@ -186,8 +259,10 @@ function addRow(host: HTMLElement, title: string, labels: string[], unit: string
 export function renderDayRows(host: HTMLElement, input: {
   points: RowPoint[];
   plan: RowPlan | null;
+  openingPlan: RowPlan | null;
   car: CarQuarter[];
   forecastKwh: number | null;
+  sunCover: { from: string | null; to: string | null; points: SunCoverPoint[] } | null;
   recordedUntilMinute: number | null;
 }): void {
   charts.forEach((chart) => chart.destroy());
@@ -224,44 +299,53 @@ export function renderDayRows(host: HTMLElement, input: {
       return null;
     return point.chargeKw ?? 0;
   })));
-  const batteryPlan = throughMidnight(quarters.map((time) => {
-    if (!plan)
-      return null;
-    if (inSlot(time, plan.batteryFrom, plan.batteryTo))
-      return -plan.batteryKw;
-    if (inSlot(time, plan.batterySellFrom, plan.batterySellTo))
-      return plan.batterySellKw;
-    if (!plan.batteryFrom && !plan.batterySellFrom)
-      return null;
-    return 0;
-  }));
+  const opening = input.openingPlan;
+  const batteryPlan = throughMidnight(quarters.map((time) =>
+    batteryPlanKw(time, plan, opening, recordedUntil)
+  ));
+  const reserve = plan?.reserveSoc ?? null;
   const carTitle = plan?.car === "battery"
-    ? `Obluda plan, ${plan.carKw.toFixed(0)} kW from the battery${plan.carFrom && plan.carTo ? ` ${plan.carFrom}–${plan.carTo}` : ""}`
+    ? `Obluda plan, ${plan.carKw.toFixed(0)} kW from the battery${reserve === null ? "" : ` down to ${reserve.toFixed(0)}%`}${plan.carFrom && plan.carTo ? ` ${plan.carFrom}–${plan.carTo}` : ""}`
     : plan?.car === "surplus"
       ? "Obluda plan, leftover sun"
       : plan?.carFrom && plan.carTo
         ? `Obluda plan ${plan.carFrom}–${plan.carTo}`
         : "Obluda plan off";
-  const batterySale = plan?.batterySellFrom ? `sale ${plan.batterySellFrom}–${plan.batterySellTo}` : null;
-  const batteryCharge = plan?.batteryFrom ? `charge ${plan.batteryFrom}–${plan.batteryTo}` : null;
-  const batteryTitle = batterySale && batteryCharge
-    ? `Battery plan, ${batterySale}, ${batteryCharge}`
-    : batterySale
-      ? `Battery plan, ${batterySale}`
-      : batteryCharge
-        ? `Battery plan, ${batteryCharge}`
-        : "Battery plan off";
+  const batteryTitle = batteryPlanTitle(plan, opening, recordedUntil);
 
-  const tankTitle = plan?.tankFrom && plan.tankTo
-    ? `Planned heating ${plan.tankFrom}–${plan.tankTo}`
+  const tankSource = tankPlanForChart(plan, opening, recordedUntil);
+  const tankTitle = tankSource?.tankFrom && tankSource.tankTo
+    ? `Planned heating ${tankSource.tankFrom}–${tankSource.tankTo}`
     : "No heating planned";
 
-  addRow(host, "Price", labels, "EUR/MWh", [
-    { label: "Price", data: throughMidnight(quarters.map((time) => energy.get(time)?.priceEurPerMwh ?? null)), color: "#6750a4" }
+  const price = throughMidnight(quarters.map((time) => energy.get(time)?.priceEurPerMwh ?? null));
+  const spread = priceSpread(price);
+  const priceTitle = spread
+    ? `Price ${Math.round(spread.low)}–${Math.round(spread.high)} EUR/MWh, gap ${spread.gapCzk.toFixed(1)} Kč/kWh, ${spread.gapCzk >= SALE_GAP_CZK ? "sale allowed" : "sale not allowed"}`
+    : "Price";
+  addRow(host, priceTitle, labels, "EUR/MWh", [
+    { label: "Price", data: price, color: "#6750a4" },
+    ...(spread ? [
+      { label: "High", data: labels.map(() => spread.high), color: "#6750a4", dashed: true },
+      { label: "Low", data: labels.map(() => spread.low), color: "#8a5a00", dashed: true }
+    ] : [])
   ]);
   addRow(host, "Sun", labels, "kWh", [
     { label: "Made", data: madeKwh, color: "#386a20", spanGaps: true },
     ...(input.forecastKwh === null ? [] : [{ label: "Forecast", data: labels.map(() => input.forecastKwh), color: "#386a20", dashed: true }])
+  ]);
+  const cover = input.sunCover;
+  const coverTitle = cover?.from && cover.to
+    ? `Sun covers the house ${cover.from}–${cover.to}`
+    : "Sun stays under the house";
+  const byHour = new Map((cover?.points ?? []).map((point) => [point.time.slice(0, 2), point]));
+  const coverValue = (pick: (point: SunCoverPoint) => number) => throughMidnight(quarters.map((time) => {
+    const point = byHour.get(time.slice(0, 2));
+    return point ? pick(point) : null;
+  }));
+  addRow(host, coverTitle, labels, "kW", [
+    { label: "Forecast", data: coverValue((point) => point.pvKw), color: "#386a20", spanGaps: false },
+    { label: "House", data: coverValue((point) => point.houseKw), color: "#8a5a00", spanGaps: false }
   ]);
   addRow(host, "Grid · red below zero is import", labels, "kW", [
     { label: "Grid", data: grid, color: "#49454f", signed: true }
@@ -272,7 +356,11 @@ export function renderDayRows(host: HTMLElement, input: {
     { label: "40°C", data: labels.map(() => 40), color: "#8a5a00", dashed: true }
   ]);
   addRow(host, tankTitle, labels, "on", [
-    { label: "Plan", data: throughMidnight(slotLine(quarters, plan?.tankFrom ?? null, plan?.tankTo ?? null, 1)), color: "#b3261e" }
+    {
+      label: "Plan",
+      data: throughMidnight(quarters.map((time) => tankPlanOn(time, plan, opening, recordedUntil))),
+      color: "#b3261e"
+    }
   ], 0, 1);
   addRow(host, "Heater relay", labels, "on", [
     { label: "Relay", data: heater, color: "#8a5a00" }
@@ -283,15 +371,15 @@ export function renderDayRows(host: HTMLElement, input: {
   addRow(host, "Obluda charging", labels, "kW", [
     { label: "Charging", data: charging, color: "#006a6a" }
   ]);
-  addRow(host, batteryTitle, labels, "kW", [
-    { label: "Plan", data: batteryPlan, color: "#7d5260" }
+  addRow(host, `${batteryTitle}. Green is a buy, red is a sale`, labels, "kW", [
+    { label: "Plan", data: batteryPlan, color: "#7d5260", trade: true }
   ]);
-  addRow(host, "Battery power", labels, "kW", [
-    { label: "Battery", data: throughMidnight(quarters.map((time) => energy.get(time)?.batteryKw ?? null)), color: "#7d5260" }
+  addRow(host, "Battery power. Green is charge, red is discharge", labels, "kW", [
+    { label: "Battery", data: throughMidnight(quarters.map((time) => energy.get(time)?.batteryKw ?? null)), color: "#7d5260", trade: true }
   ]);
   addRow(host, "House battery", labels, "%", [
     { label: "State of charge", data: throughMidnight(quarters.map((time) => energy.get(time)?.socPercent ?? null)), color: "#1d192b", spanGaps: true },
-    { label: "50%", data: labels.map(() => 50), color: "#8a5a00", dashed: true },
+    ...(reserve === null ? [] : [{ label: `${reserve.toFixed(0)}% reserve`, data: labels.map(() => reserve), color: "#8a5a00", dashed: true }]),
     { label: "20% floor", data: labels.map(() => 20), color: "#b3261e", dashed: true }
   ], 0, 100);
 }

@@ -1,15 +1,16 @@
 /*
 One plan for the tank, the car, and the home battery.
 Hot water finishes by 06:00 on the same day.
-Energy stored above 50% goes to the car first. What the car does not take is sold in the expensive hours when that price is at least 3 Kč/kWh above the day's cheapest, and the sale stops at 50%.
-The same gap buys a grid charge, but only the room the sun will not fill. After today's expensive hour has passed, tomorrow's sun counts, and the buy waits for the cheaper hour through the next 06:00.
+Energy above the house reserve is sold when the day's peak is at least 3 Kč/kWh above the cheapest hour, and the car is bought in that cheap hour instead. The reserve still covers the night. A grid buy lasts only as long as the battery needs to take on the missing energy. The sale is planned from that buy: the energy it adds, minus the house use during the peak. What remains above the reserve is sold. The car takes the battery only when the day is too flat to be worth a grid slot. It does not start during the expensive hours. The reserve is the 20% outage floor plus the night, plus the daylight the expected sun will not cover. The sale stops at the reserve.
+A house charge buys the expensive hours the sun and the battery will not cover, when the gap is above 2 Kč/kWh. A trade still needs 3 Kč/kWh and buys only the empty room the sun will not fill. The plan buys the larger of the two. After today's expensive hour has passed, tomorrow's sun counts, and the buy waits for the cheaper hour through the next 06:00.
 Below that, the car takes leftover sun when the day still covers the house and the car. Otherwise it finishes from the grid by the next 06:00 and may cross midnight.
 From the house battery the car takes 6 kW, so the battery can cover it. A grid slot stays at 11 kW. The battery takes the cheapest period long enough, including daytime.
 */
 
 import { cheapestSlot, cheapestSlotAcrossMidnight, type PriceQuarter, type Slot } from "./cheap-slot.js";
 import { czkPerKwh, type SpotPrice } from "./ote-day-ahead.js";
-import { cloudBand, houseGridKwh, overnightKwh, type Season } from "./seasonal-profile.js";
+import { overnightKwh, reserveSocPercent, type Season } from "./seasonal-profile.js";
+import { addDays, sunClocks } from "./sun-clock.js";
 
 const TANK_LITERS = 200;
 const TANK_TARGET_C = 55;
@@ -23,9 +24,9 @@ const BATTERY_CHARGE_MAX_KW = 3;
 const DEADLINE = "06:00";
 const SELL_BAND_EUR_PER_MWH = 20;
 const SELL_SPREAD_CZK_PER_KWH = 3;
+const HOUSE_GAP_CZK = 2;
 const CZK_PER_EUR = 25;
 const SELL_KW = 8;
-const UPPER_HALF_SOC = 50;
 const PACK_KWH = 19;
 const FLOOR_PERCENT = 20;
 const DISCHARGE_FROM = "18:00";
@@ -56,6 +57,9 @@ export type EnergyPlan = {
   batteryDischargeKw: number;
   batteryDischargeFrom: string | null;
   batteryDischargeTo: string | null;
+  batteryHoldFrom: string | null;
+  batteryHoldTo: string | null;
+  reserveSoc: number;
 };
 
 /* Average power of the energy above the floor that covers the house from 18:00 to 06:00. */
@@ -119,6 +123,40 @@ function priced(prices: SpotPrice[]): PriceQuarter[] {
   }));
 }
 
+/* True when the clock sits inside the slot. The end minute is excluded. */
+function clockInside(clock: string, from: string, to: string): boolean {
+  const at = clockMinutes(clock);
+  const start = clockMinutes(from);
+  const end = clockMinutes(to);
+  if (start === end)
+    return false;
+  if (end > start)
+    return at >= start && at < end;
+  return at >= start || at < end;
+}
+
+/* Tank window. One that has started keeps its hours, so a warmer reading cannot turn the relay off. After it has ended, the next window may cross midnight. */
+function tankPlanSlot(
+  today: PriceQuarter[],
+  tomorrow: PriceQuarter[] | null,
+  currentC: number | null,
+  openingC: number | null,
+  startAt: string | null
+): Slot | null {
+  if (currentC === null || currentC >= TANK_TARGET_C)
+    return null;
+  const sizingC = openingC === null ? currentC : Math.min(openingC, currentC);
+  const morning = cheapestSlot(today, tankEnergyKwh(sizingC), TANK_KW, DEADLINE, null);
+  if (!startAt)
+    return morning;
+  if (morning && (clockInside(startAt, morning.from, morning.to) || clockMinutes(startAt) < clockMinutes(morning.from)))
+    return morning;
+  const remaining = tankEnergyKwh(currentC);
+  if (tomorrow && tomorrow.length > 0)
+    return cheapestSlotAcrossMidnight(today, tomorrow, remaining, TANK_KW, startAt);
+  return cheapestSlot(today, remaining, TANK_KW, null, startAt);
+}
+
 /* Car slot from now. Tomorrow extends it through the next 06:00. Today alone uses the hours still ahead. */
 function carRun(
   today: PriceQuarter[],
@@ -169,12 +207,64 @@ function priceRange(quarters: PriceQuarter[]): { min: number; max: number; peak:
   return { min, max, peak };
 }
 
-/* True when the expensive hour is at least 3 Kč/kWh above the cheap hour. */
-function spreadIsWide(quarters: PriceQuarter[]): boolean {
+/* Kč/kWh between the dearest and the cheapest quarter. */
+function gapCzk(quarters: PriceQuarter[]): number | null {
   const range = priceRange(quarters);
   if (!range)
-    return false;
-  return priceCzk(range.max) - priceCzk(range.min) >= SELL_SPREAD_CZK_PER_KWH;
+    return null;
+  return priceCzk(range.max) - priceCzk(range.min);
+}
+
+/* True when the expensive hour is at least 3 Kč/kWh above the cheap hour. */
+function spreadIsWide(quarters: PriceQuarter[]): boolean {
+  const gap = gapCzk(quarters);
+  return gap !== null && gap >= SELL_SPREAD_CZK_PER_KWH;
+}
+
+/* Quarters the battery buy can still use. Tomorrow counts only through 06:00. */
+function quartersForBuy(
+  today: PriceQuarter[],
+  tomorrow: PriceQuarter[],
+  date: string,
+  startAt: string | null,
+  crossesMidnight: boolean
+): Array<PriceQuarter & { date: string }> {
+  const startMin = startAt === null ? null : clockMinutes(startAt);
+  const open = today
+    .filter((quarter) => startMin === null || clockMinutes(quarter.periodInterval.split("-")[1]) > startMin)
+    .map((quarter) => ({ ...quarter, date }));
+  if (!crossesMidnight)
+    return open;
+  const morning = tomorrow
+    .filter((quarter) => clockMinutes(quarter.periodInterval.split("-")[1]) <= clockMinutes("06:00"))
+    .map((quarter) => ({ ...quarter, date: addDays(date, 1) }));
+  return [...open, ...morning];
+}
+
+/* House energy that falls in quarters more than 2 Kč/kWh above the cheapest. */
+function expensiveHouseKwh(
+  quarters: Array<PriceQuarter & { date: string }>,
+  nightKwh: number,
+  daylightKwh: number
+): number {
+  const range = priceRange(quarters);
+  if (!range)
+    return 0;
+  let energy = 0;
+  for (const quarter of quarters) {
+    if (priceCzk(quarter.eurPerMwh) - priceCzk(range.min) <= HOUSE_GAP_CZK)
+      continue;
+    const start = quarter.periodInterval.split("-")[0];
+    const sun = sunClocks(quarter.date);
+    const dayHours = (clockMinutes(sun.set) - clockMinutes(sun.rise)) / 60;
+    const nightHours = 24 - dayHours;
+    const inDaylight = start >= sun.rise.slice(0, 5) && start < sun.set.slice(0, 5);
+    const rate = inDaylight
+      ? dayHours > 0 ? daylightKwh / dayHours : 0
+      : nightHours > 0 ? nightKwh / nightHours : 0;
+    energy += 0.25 * rate;
+  }
+  return energy;
 }
 
 /* Empty kilowatt-hours up to a full pack. The state of charge wins. The floor figure is the fallback. */
@@ -210,6 +300,61 @@ function clockMinutes(clock: string): number {
   return Number(hour) * 60 + Number(minute);
 }
 
+/* Hours of a same-day slot that finish before this clock. A charge after the peak does not count. */
+function hoursBefore(slot: Slot, before: string): number {
+  const start = clockMinutes(slot.from);
+  const end = clockMinutes(slot.to);
+  const limit = clockMinutes(before);
+  if (end <= start)
+    return 0;
+  if (end <= limit)
+    return (end - start) / 60;
+  if (start >= limit)
+    return 0;
+  return (limit - start) / 60;
+}
+
+/* Kilowatt-hours the planned charge puts in the pack before the peak. Room in the pack wins. */
+function chargeGainBeforePeak(
+  slot: Slot | null,
+  powerKw: number,
+  wantedKwh: number,
+  roomKwh: number | null,
+  peakFrom: string
+): number {
+  if (!slot || powerKw <= 0 || wantedKwh <= 0)
+    return 0;
+  const delivered = Math.min(wantedKwh, powerKw * hoursBefore(slot, peakFrom));
+  if (roomKwh === null)
+    return delivered;
+  return Math.min(delivered, Math.max(0, roomKwh));
+}
+
+/* House energy in the peak slot, from the night rate or the daylight rate. */
+function houseKwhInSlot(
+  quarters: PriceQuarter[],
+  slot: Slot,
+  date: string,
+  nightKwh: number,
+  daylightKwh: number
+): number {
+  let energy = 0;
+  for (const quarter of quarters) {
+    const start = quarter.periodInterval.split("-")[0];
+    if (!clockInside(start, slot.from, slot.to))
+      continue;
+    const sun = sunClocks(date);
+    const dayHours = (clockMinutes(sun.set.slice(0, 5)) - clockMinutes(sun.rise.slice(0, 5))) / 60;
+    const nightHours = 24 - dayHours;
+    const inDaylight = start >= sun.rise.slice(0, 5) && start < sun.set.slice(0, 5);
+    const rate = inDaylight
+      ? dayHours > 0 ? daylightKwh / dayHours : 0
+      : nightHours > 0 ? nightKwh / nightHours : 0;
+    energy += 0.25 * rate;
+  }
+  return energy;
+}
+
 /* True when two clock windows share a quarter. */
 function slotsOverlap(left: Slot | null, right: Slot | null): boolean {
   if (!left || !right)
@@ -227,7 +372,11 @@ export function buildEnergyPlan(input: {
   tomorrowPrices?: SpotPrice[];
   startAt?: string | null;
   bottomTemperatureC: number | null;
+  openingTemperatureC?: number | null;
   aboveFloorKwh: number | null;
+  date: string;
+  nightHouseKwh: number;
+  daylightHouseKwh: number;
   season: Season;
   lowCloudPercent: number | null;
   pvRemainingKwh?: number | null;
@@ -239,17 +388,31 @@ export function buildEnergyPlan(input: {
     throw new Error("The price for this day is missing");
 
   const quarters = priced(input.prices);
-  const tankKwh = input.bottomTemperatureC === null ? 0 : tankEnergyKwh(input.bottomTemperatureC);
-  const needsTank = tankKwh > 0;
-  const tankSlot = needsTank ? cheapestSlot(quarters, tankKwh, TANK_KW, DEADLINE) : null;
+  const tankSlot = tankPlanSlot(
+    quarters,
+    input.tomorrowPrices && input.tomorrowPrices.length > 0 ? priced(input.tomorrowPrices) : null,
+    input.bottomTemperatureC,
+    input.openingTemperatureC ?? null,
+    input.startAt ?? null
+  );
+  const needsTank = input.bottomTemperatureC !== null && input.bottomTemperatureC < TANK_TARGET_C;
   const tank = input.bottomTemperatureC === null ? "limited" : needsTank ? tankSlot ? "on" : "limited" : "off";
   const tankTimes = placed(tank === "on" ? tankSlot : null);
 
   const carWanted = input.car !== null && input.car.atHome && input.car.missingKwh > 0;
   const socPercent = input.socPercent;
   const socKnown = typeof socPercent === "number";
-  const upperHalf = socKnown && socPercent > UPPER_HALF_SOC;
-  const carFromBattery = Boolean(carWanted && upperHalf);
+  const peak = peakSellSlot(quarters);
+  const peakStillAhead = !input.startAt || !peak || clockMinutes(peak.from) > clockMinutes(input.startAt);
+  const pvKnown = typeof input.pvRemainingKwh === "number";
+  const todaySun = input.pvRemainingKwh ?? 0;
+  const tomorrowSun = typeof input.tomorrowPvKwh === "number" ? input.tomorrowPvKwh : null;
+  const sunForHouse = !pvKnown ? null : peakStillAhead || tomorrowSun === null ? todaySun : todaySun + tomorrowSun;
+  const tomorrow = input.tomorrowPrices && input.tomorrowPrices.length > 0 ? priced(input.tomorrowPrices) : null;
+  const reserveSoc = reserveSocPercent(input.nightHouseKwh, input.daylightHouseKwh, sunForHouse);
+  const upperHalf = socKnown && socPercent > reserveSoc;
+  const sellBeatsCar = spreadIsWide(quarters) && peak !== null;
+  const carFromBattery = Boolean(carWanted && upperHalf && !sellBeatsCar);
   const sunEnough = carWanted && !carFromBattery && input.car
     ? sunCoversCar({
       pvRemainingKwh: input.pvRemainingKwh ?? null,
@@ -258,7 +421,6 @@ export function buildEnergyPlan(input: {
       missingKwh: input.car.missingKwh
     })
     : false;
-  const tomorrow = input.tomorrowPrices ? priced(input.tomorrowPrices) : null;
   const carSlot = carWanted && !carFromBattery && !sunEnough && input.car
     ? carRun(quarters, tomorrow, input.car.missingKwh, input.startAt ?? null)
     : null;
@@ -268,12 +430,12 @@ export function buildEnergyPlan(input: {
       ? "off"
       : carFromBattery
         ? "battery"
-        : sunEnough
-          ? "surplus"
-          : carSlot
-            ? "on"
-            : "limited";
-  const aboveHalfKwh = socKnown ? Math.max(0, (socPercent - UPPER_HALF_SOC) / 100 * PACK_KWH) : 0;
+      : sunEnough
+        ? "surplus"
+        : carSlot
+          ? "on"
+          : "off";
+  const aboveHalfKwh = socKnown ? Math.max(0, (socPercent - reserveSoc) / 100 * PACK_KWH) : 0;
   const carTimes = placed(car === "on"
     ? carSlot
     : car === "battery" && input.startAt
@@ -281,31 +443,50 @@ export function buildEnergyPlan(input: {
       : null);
 
   const batteryPowerKw = batteryChargeKw(tank === "on", car === "on");
-  const seasonalKwh = input.lowCloudPercent === null || input.aboveFloorKwh === null
-    ? 0
-    : houseGridKwh(input.season, cloudBand(input.lowCloudPercent), input.aboveFloorKwh);
   const roomKwh = roomToFullKwh(input.socPercent, input.aboveFloorKwh);
-  const pvKnown = typeof input.pvRemainingKwh === "number";
-  const peak = peakSellSlot(quarters);
-  const peakStillAhead = !input.startAt || !peak || clockMinutes(peak.from) > clockMinutes(input.startAt);
-  const todaySun = input.pvRemainingKwh ?? 0;
-  const tomorrowSun = typeof input.tomorrowPvKwh === "number" ? input.tomorrowPvKwh : null;
   const sunShortKwh = roomKwh === null || !pvKnown
     ? null
     : peakStillAhead || tomorrowSun === null
       ? Math.max(0, roomKwh - todaySun)
       : Math.max(0, roomKwh - todaySun - tomorrowSun);
-  const batteryKwh = spreadIsWide(quarters) && sunShortKwh !== null ? sunShortKwh : seasonalKwh;
+  const crossesMidnight = Boolean(input.startAt) && tomorrow !== null && !peakStillAhead;
+  const slotQuarters = quartersForBuy(quarters, tomorrow ?? [], input.date, input.startAt ?? null, crossesMidnight);
+  const gap = gapCzk(slotQuarters);
+  const tradingKwh = spreadIsWide(quarters) && sunShortKwh !== null ? sunShortKwh : 0;
+  const houseNeed = input.nightHouseKwh + input.daylightHouseKwh;
+  const uncovered = sunForHouse === null ? houseNeed : Math.max(0, houseNeed - sunForHouse);
+  const expensive = expensiveHouseKwh(slotQuarters, input.nightHouseKwh, input.daylightHouseKwh);
+  const available = input.aboveFloorKwh === null ? null : Math.max(0, input.aboveFloorKwh);
+  const houseKwh = gap !== null && gap > HOUSE_GAP_CZK && available !== null && available < expensive
+    ? Math.min(uncovered, expensive - available)
+    : 0;
+  const batteryKwh = Math.max(tradingKwh, houseKwh);
   const batterySlot = batteryKwh > 0
     ? input.startAt && tomorrow && tomorrow.length > 0 && !peakStillAhead
       ? cheapestSlotAcrossMidnight(quarters, tomorrow, batteryKwh, batteryPowerKw, input.startAt)
       : cheapestSlot(quarters, batteryKwh, batteryPowerKw, null, input.startAt ?? null)
     : null;
   const batteryTimes = placed(batterySlot);
-  const sellEnergy = input.socPercent === undefined
-    ? input.aboveFloorKwh !== null && input.aboveFloorKwh > 0
-    : upperHalf && !carFromBattery;
-  const sellCandidate = sellEnergy ? peakSellSlot(quarters) : null;
+  const peakForSale = peakStillAhead ? peak : null;
+  const storedKwh = socKnown
+    ? socPercent / 100 * PACK_KWH
+    : input.aboveFloorKwh === null
+      ? null
+      : PACK_KWH * FLOOR_PERCENT / 100 + input.aboveFloorKwh;
+  const gainKwh = peakForSale
+    ? chargeGainBeforePeak(batterySlot, batteryPowerKw, batteryKwh, roomKwh, peakForSale.from)
+    : 0;
+  const peakUseKwh = peakForSale
+    ? houseKwhInSlot(quarters, peakForSale, input.date, input.nightHouseKwh, input.daylightHouseKwh)
+    : 0;
+  const reserveKwh = reserveSoc / 100 * PACK_KWH;
+  const sellableKwh = storedKwh === null ? null : Math.min(PACK_KWH, storedKwh + gainKwh) - peakUseKwh - reserveKwh;
+  const sellEnergy = peakForSale === null
+    ? false
+    : !socKnown
+      ? input.aboveFloorKwh !== null && input.aboveFloorKwh > 0
+      : (sellableKwh ?? 0) > 0 && !carFromBattery;
+  const sellCandidate = sellEnergy ? peakForSale : null;
   const sellSlot = slotsOverlap(sellCandidate, batterySlot) ? null : sellCandidate;
   const dischargeKw = houseDischargeKw(input.aboveFloorKwh, input.season);
 
@@ -326,7 +507,10 @@ export function buildEnergyPlan(input: {
     batterySellKw: sellSlot ? SELL_KW : 0,
     batteryDischargeKw: dischargeKw,
     batteryDischargeFrom: dischargeKw > 0 ? DISCHARGE_FROM : null,
-    batteryDischargeTo: dischargeKw > 0 ? DISCHARGE_TO : null
+    batteryDischargeTo: dischargeKw > 0 ? DISCHARGE_TO : null,
+    batteryHoldFrom: null,
+    batteryHoldTo: null,
+    reserveSoc
   };
 }
 
@@ -357,6 +541,10 @@ export function formatEnergyPlan(plan: EnergyPlan): string {
     `batteryDischargeKw=${plan.batteryDischargeKw.toFixed(2)}`,
     `batteryDischargeFrom=${plan.batteryDischargeFrom ?? ""}`,
     `batteryDischargeTo=${plan.batteryDischargeTo ?? ""}`,
+    `batteryHold=${plan.batteryHoldFrom ? "1" : "0"}`,
+    `batteryHoldFrom=${plan.batteryHoldFrom ?? ""}`,
+    `batteryHoldTo=${plan.batteryHoldTo ?? ""}`,
+    `reserveSoc=${plan.reserveSoc.toFixed(1)}`,
     ""
   ].join("\n");
 }

@@ -4,7 +4,7 @@ Tests for the TeslaMate values the plan reads.
 
 import { describe, expect, it } from "vitest";
 import net from "node:net";
-import { carReadingFromMessages, decodeMqttPublishes, readTeslaMateCar } from "../src/services/teslamate-car.js";
+import { carReadingFromMessages, chargerPowerFromMessages, decodeMqttPublishes, readTeslaMateCar } from "../src/services/teslamate-car.js";
 
 function publish(topic: string, payload: string): Buffer {
   const topicBytes = Buffer.from(topic);
@@ -41,6 +41,11 @@ describe("TeslaMate car", () => {
       publish("teslamate/cars/1/plugged_in", "true")
     ]);
     expect(() => carReadingFromMessages(decodeMqttPublishes(packet))).toThrow(/geofence/);
+  });
+
+  it("reads the wallbox power", () => {
+    const packet = publish("teslamate/cars/1/charger_power", "11");
+    expect(chargerPowerFromMessages(decodeMqttPublishes(packet))).toBe(11);
   });
 
   it("reads the three values from a broker that answers with retained publishes", async () => {

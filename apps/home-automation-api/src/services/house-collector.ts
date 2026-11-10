@@ -9,6 +9,8 @@ import type { HeatingSample, HouseArchive, PowerReading } from "./house-archive.
 
 const FIRST_QUARTER_HOUR_DAY = "2025-10-01";
 
+const TANK_KW = 2.5;
+
 export type HouseSnapshot = {
   archive: HouseArchive;
   now: Date;
@@ -16,6 +18,7 @@ export type HouseSnapshot = {
   wattsonicDaysDir: string;
   readHeating: (() => Promise<HeatingSample>) | null;
   readPower: (() => Promise<PowerReading>) | null;
+  readCarCharge?: (() => Promise<number>) | null;
 };
 
 /* Calendar date in Europe/Prague, shifted by whole days. */
@@ -70,10 +73,29 @@ async function storeOldestMissingCurve(
     await storeIfMissing(archive, post, missing);
 }
 
-/* Store prices and, when a reader is configured, one heater sample and one power sample. */
+/* Store prices and, when a reader is configured, one heater sample and one power sample.
+The power row also keeps the tank's 2.5 kW, the car's charge power, and the battery charge. */
 export async function collectHouseSnapshot(snapshot: HouseSnapshot): Promise<void> {
-  if (snapshot.readPower)
-    snapshot.archive.savePowerSample(await snapshot.readPower());
+  if (snapshot.readPower) {
+    const power = await snapshot.readPower();
+    const heating = snapshot.readHeating ? await snapshot.readHeating() : null;
+    let carChargeKw: number | null = null;
+    if (snapshot.readCarCharge) {
+      try {
+        carChargeKw = await snapshot.readCarCharge();
+      } catch {
+        carChargeKw = null;
+      }
+    }
+    snapshot.archive.savePowerSample({
+      ...power,
+      carChargeKw,
+      tankKw: heating ? (heating.heatingOn ? TANK_KW : 0) : null,
+      batteryChargeKw: Math.max(0, -power.batteryKw)
+    });
+    if (heating)
+      snapshot.archive.applyHeatingSample(heating);
+  }
   const today = pragueDate(snapshot.now, 0);
   const tomorrow = pragueDate(snapshot.now, 1);
   await storeIfMissing(snapshot.archive, snapshot.post, today);
@@ -90,6 +112,6 @@ export async function collectHouseSnapshot(snapshot: HouseSnapshot): Promise<voi
       snapshot.wattsonicDaysDir,
       today
     );
-  if (snapshot.readHeating)
+  if (!snapshot.readPower && snapshot.readHeating)
     snapshot.archive.applyHeatingSample(await snapshot.readHeating());
 }

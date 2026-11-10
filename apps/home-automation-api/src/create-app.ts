@@ -15,10 +15,12 @@ import { registerEnergyDayRoute } from "./routes/energy-day.route.js";
 import { registerEnergyDataRoutes } from "./routes/energy-data.route.js";
 import { registerEnergyPlanRoute } from "./routes/energy-plan.route.js";
 import { registerCarDayRoute } from "./routes/car-day.route.js";
+import { registerReserveHistoryRoute } from "./routes/reserve-history.route.js";
+import { registerSunCoverRoute } from "./routes/sun-cover.route.js";
 import type { CarReading } from "./services/car-energy.js";
 import type { CarPoint } from "./services/car-day.js";
 import { readTeslaMateCar } from "./services/teslamate-car.js";
-import { openCarDayQuery, readCarDay } from "./services/teslamate-history.js";
+import { chargeKwByQuarter, openCarDayQuery, readCarDay } from "./services/teslamate-history.js";
 
 export type AppDeps = EnvironmentConfig & {
   fetchImpl: FetchImpl;
@@ -139,13 +141,6 @@ export function createApp(deps: CreateAppDeps = createEnvironmentDeps()) {
   const readCar = deps.readCar ?? (deps.teslamateMqttHost
     ? () => readTeslaMateCar(deps.teslamateMqttHost ?? "")
     : null);
-  registerEnergyPlanRoute(app, {
-    apiKey: deps.apiKey,
-    archive: houseArchive,
-    readCar,
-    fetchImpl: deps.fetchImpl
-  });
-
   const carHistory = deps.readCarDay
     ? null
     : openCarDayQuery({
@@ -158,9 +153,41 @@ export function createApp(deps: CreateAppDeps = createEnvironmentDeps()) {
     app.addHook("onClose", async () => {
       await carHistory.close();
     });
+  const readCarDayForPlan = deps.readCarDay ?? (carHistory ? (date: string) => readCarDay(carHistory.query, date) : null);
+  const readChargeKw = carHistory
+    ? (fromDate: string, untilDate: string) => chargeKwByQuarter(carHistory.query, fromDate, untilDate)
+    : null;
+  registerEnergyPlanRoute(app, {
+    apiKey: deps.apiKey,
+    archive: houseArchive,
+    readCar,
+    readCarDay: readCarDayForPlan,
+    readChargeKw,
+    fetchImpl: deps.fetchImpl,
+    predictionStore,
+    forecastSolarApiKey: deps.forecastSolarApiKey,
+    timeoutMs: deps.timeoutMs
+  });
+  registerSunCoverRoute(app, {
+    apiKey: deps.apiKey,
+    archive: houseArchive,
+    predictionStore,
+    fetchImpl: deps.fetchImpl,
+    forecastSolarApiKey: deps.forecastSolarApiKey,
+    timeoutMs: deps.timeoutMs,
+    readCarDay: readCarDayForPlan,
+    readChargeKw
+  });
+  registerReserveHistoryRoute(app, {
+    apiKey: deps.apiKey,
+    archive: houseArchive,
+    fetchImpl: deps.fetchImpl,
+    readCarDay: readCarDayForPlan,
+    readChargeKw
+  });
   registerCarDayRoute(app, {
     apiKey: deps.apiKey,
-    readCarDay: deps.readCarDay ?? (carHistory ? (date) => readCarDay(carHistory.query, date) : null),
+    readCarDay: readCarDayForPlan,
     readChargeLimit: readCar ? async () => (await readCar()).limitPercent : null
   });
 

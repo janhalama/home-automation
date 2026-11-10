@@ -13,11 +13,12 @@
  20 seconds. Putting the 20% floor back immediately makes the inverter discharge
  what it just bought.
 
- The upper half of the battery, above 50%, is for the car first and for
- selling second. While the car may take that half and the battery is still
- above 50%, the end-SOC floor is 50% so the charge stops there. Once the
- battery is at 50% or below, the floor returns to VI16 and the house may use
- it down to that reserve. A sale still stops at 50%.
+ Energy above the house reserve is for the car first and for selling second.
+ VI22 is that reserve, sent by the plan: the 20% outage floor plus a sunless
+ night and day. While the car may take what is above it, the end-SOC floor
+ is the reserve. Once the battery is at the reserve or below, the floor
+ returns to VI16 and the house may use it. A sale stops at the reserve.
+ A missing VI22 keeps the old 50% line.
  A tank load, or a car charge bought from the grid, still lifts the floor to
  the SOC at the start of that load. The grid covers it. When the load stops,
  the floor returns to VI16.
@@ -70,7 +71,7 @@ https://smarthome.exposed/wattsonic-hybrid-inverter-gen3-modbus-rtu-protocol
 #define PERIOD_START_MIDNIGHT 0
 #define PERIOD_STOP_END_OF_DAY 5947
 #define CHARGE_RELEASE_SECONDS 20
-#define UPPER_HALF_SOC 50.0
+#define RESERVE_SOC_FALLBACK 50.0
 
 // Constants for output indexes
 #define OUTPUT_MODE 0
@@ -102,6 +103,7 @@ float batteryHoldSoc = 0;
 #define VI_PLAN_CAR "VI18"
 #define VI_PLAN_BATTERY_CHARGE "VI20"
 #define VI_PLAN_BATTERY_KW "VI21"
+#define VI_PLAN_RESERVE_SOC "VI22"
 
 #define INPUT_SOC 0
 
@@ -124,6 +126,9 @@ void updateInverterState() {
     float soc = getinput(INPUT_SOC);
     float onGridEndSOCProtection = getio(VI_ONGRID_SOC_PROTECTION_USER_SETTING);
     float onGridEndSOCProtectionUserSetting = onGridEndSOCProtection;
+    float reserveSoc = getio(VI_PLAN_RESERVE_SOC);
+    if (reserveSoc <= onGridEndSOCProtectionUserSetting || reserveSoc > 100.0)
+        reserveSoc = RESERVE_SOC_FALLBACK;
     int planFresh = getio(VI_PLAN_FRESH) == 1;
     int planOrdersCharge = planFresh && getio(VI_PLAN_BATTERY_CHARGE) == 1;
     int chargeLimit = BATTERY_POWER_LIMIT_CHARGE_MAX;
@@ -167,7 +172,7 @@ void updateInverterState() {
         batteryMode = BATTERY_DISCHARGE_MODE;
         batteryChargeDischargePowerLimit = BATTERY_POWER_LIMIT_DISCHARGE_MAX;
         gridInjectionPowerLimit = GRID_INJECTION_POWER_LIMIT_MAX;
-        onGridEndSOCProtection = UPPER_HALF_SOC;
+        onGridEndSOCProtection = reserveSoc;
         periodEnabled = 1;
         periodStart = PERIOD_START_MIDNIGHT;
         periodStop = PERIOD_STOP_END_OF_DAY;
@@ -188,22 +193,23 @@ void updateInverterState() {
         chargeReleaseSeconds = chargeReleaseSeconds - 1;
     }
 
-    // The car takes the stored half above 50%. A grid-bought car charge and the tank do not.
+    // The car takes what is stored above the house reserve. A grid-bought car charge and the tank do not.
     float planCarCommand = getio(VI_PLAN_CAR);
     int carTakesUpperHalf = planFresh && !planOrdersCharge && planCarCommand >= 3;
     int planCoversLoad = planFresh && !planOrdersCharge && getio(VI_PLAN_BATTERY_CHARGE) >= 0
         && !carTakesUpperHalf
         && ((planCarCommand >= 1 && planCarCommand < 3) || getio(VI_PLAN_TANK) >= 1);
+    int cheapHourHolds = planFresh && !planOrdersCharge && getio(VI_PLAN_BATTERY_CHARGE) == 2;
     if (carTakesUpperHalf) {
         batteryHoldActive = 0;
-        if (soc > UPPER_HALF_SOC) {
-            onGridEndSOCProtection = UPPER_HALF_SOC;
+        if (soc > reserveSoc) {
+            onGridEndSOCProtection = reserveSoc;
             sprintf(inverterState, "Car takes the upper half");
         } else {
             onGridEndSOCProtection = onGridEndSOCProtectionUserSetting;
             sprintf(inverterState, "House uses the battery");
         }
-    } else if (planCoversLoad) {
+    } else if (planCoversLoad || cheapHourHolds) {
         if (!batteryHoldActive) {
             batteryHoldSoc = soc;
             if (batteryHoldSoc < onGridEndSOCProtectionUserSetting)

@@ -44,6 +44,23 @@ describe("house archive", () => {
     archive.close();
   });
 
+  it("returns a heater period that is still on during a later day", () => {
+    const archive = openHouseArchive(":memory:");
+    archive.applyHeatingSample({ at: "2026-10-31T08:00:00", heatingOn: true, temperatureC: 16 });
+    archive.applyHeatingSample({ at: "2026-11-03T05:00:00", heatingOn: false, temperatureC: 55 });
+
+    expect(archive.listHeatingPeriods("2026-11-01")).toEqual([]);
+    expect(archive.listHeatingPeriodsOverlapping("2026-11-01T00:00:00", "2026-11-02T00:00:00")).toEqual([
+      {
+        startedAt: "2026-10-31T08:00:00",
+        endedAt: "2026-11-03T05:00:00",
+        startTemperatureC: 16,
+        endTemperatureC: 55
+      }
+    ]);
+    archive.close();
+  });
+
   it("opens a period only on the rising edge", () => {
     const first = heatingTransition(null, {
       at: "2026-10-26T01:00:00",

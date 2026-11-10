@@ -7,6 +7,13 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { formatErrorResponse } from "../lib/plain-text-response.js";
 import { carJobFromReading, type CarReading } from "../services/car-energy.js";
 import { buildEnergyPlan, formatEnergyPlan } from "../services/energy-plan.js";
+import { heaterIsOn, HOUSE_LOAD_DAYS, houseKwByHour, houseLoadDates, houseLoadForPlan } from "../services/recent-house-load.js";
+import type { PredictionStore } from "../services/prediction-store.js";
+import { alignSunCover } from "../services/sun-cover.js";
+import { rememberSunHours } from "../services/sun-hours.js";
+import { chargeKwLookup } from "../services/teslamate-history.js";
+import type { CarPoint } from "../services/car-day.js";
+import { addDays, daylightDate } from "../services/sun-clock.js";
 import type { FetchImpl } from "../services/forecast-solar-client.js";
 import type { HouseArchive } from "../services/house-archive.js";
 import { pragueDate, pragueTimestamp } from "../services/house-collector.js";
@@ -21,7 +28,12 @@ export type EnergyPlanDeps = {
   apiKey: string;
   archive: HouseArchive | null;
   readCar: (() => Promise<CarReading>) | null;
+  readCarDay: ((date: string) => Promise<CarPoint[]>) | null;
+  readChargeKw: ((fromDate: string, untilDate: string) => Promise<(at: string) => number>) | null;
   fetchImpl: FetchImpl;
+  predictionStore: PredictionStore | null;
+  forecastSolarApiKey: string;
+  timeoutMs: number;
 };
 
 /* Refuse a call that has no server key or the wrong client key. */
@@ -39,11 +51,19 @@ function rejectUnauthorized(apiKey: string, request: FastifyRequest, reply: Fast
   return false;
 }
 
-/* State of charge for this plan. A future day uses the last sample from before it. */
+/* State of charge for the live plan. A future day uses the last sample from before it. */
 function socPercentFor(archive: HouseArchive, date: string): number | null {
   const sameDay = archive.listPowerSamples(date).at(-1);
   if (sameDay)
     return sameDay.socPercent;
+  return archive.latestPowerSampleBefore(date)?.socPercent ?? null;
+}
+
+/* State of charge before this day's charge. The first sample of the day, or the one before it. */
+function socAtOpen(archive: HouseArchive, date: string): number | null {
+  const first = archive.listPowerSamples(date)[0];
+  if (first)
+    return first.socPercent;
   return archive.latestPowerSampleBefore(date)?.socPercent ?? null;
 }
 
@@ -72,26 +92,60 @@ function aboveFloorKwh(socPercent: number | null): number | null {
   return Math.max(0, socPercent - FLOOR_PERCENT) / 100 * BATTERY_KWH;
 }
 
+/* Record how long the plan pull took. The query holds the key, so it stays out of the log. */
+function registerPlanPollLog(app: FastifyInstance): void {
+  app.addHook("onResponse", async (request, reply) => {
+    const path = request.url.split("?")[0];
+    if (path !== "/api/energy/plan")
+      return;
+    request.log.info({ statusCode: reply.statusCode, ms: Math.round(reply.elapsedTime) }, "plan poll");
+  });
+}
+
 /* Register the plan Loxone pulls once a day. */
 export function registerEnergyPlanRoute(app: FastifyInstance, deps: EnergyPlanDeps): void {
+  registerPlanPollLog(app);
+  app.route({
+    method: "GET",
+    url: "/api/energy/plan-log",
+    schema: {
+      querystring: Type.Object({
+        error: Type.String(),
+        apiKey: Type.Optional(Type.String())
+      }, { additionalProperties: false })
+    },
+    handler: async (request, reply) => {
+      const query = request.query as { error: string; apiKey?: string };
+      if (rejectUnauthorized(deps.apiKey, request, reply, query.apiKey))
+        return;
+      request.log.error({ error: query.error.slice(0, 80) }, "plan poll failed");
+      reply.status(200).type("text/plain; charset=utf-8").send("ok\n");
+    }
+  });
   app.route({
     method: "GET",
     url: "/api/energy/plan",
     schema: {
       querystring: Type.Object({
         date: Type.Optional(Type.String()),
-        apiKey: Type.Optional(Type.String())
+        apiKey: Type.Optional(Type.String()),
+        asOf: Type.Optional(Type.String())
       }, { additionalProperties: false })
     },
     handler: async (request, reply) => {
-      const query = request.query as { date?: string; apiKey?: string };
+      const query = request.query as { date?: string; apiKey?: string; asOf?: string };
       if (rejectUnauthorized(deps.apiKey, request, reply, query.apiKey))
         return;
+      if (query.asOf !== undefined && query.asOf !== "open") {
+        reply.status(400).type("text/plain; charset=utf-8").send(formatErrorResponse("bad_request"));
+        return;
+      }
       const date = query.date ?? pragueTimestamp(new Date()).slice(0, 10);
       if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
         reply.status(400).type("text/plain; charset=utf-8").send(formatErrorResponse("bad_request"));
         return;
       }
+      const opening = query.asOf === "open";
       if (!deps.archive) {
         reply.status(503).type("text/plain; charset=utf-8").send(formatErrorResponse("server_misconfigured"));
         return;
@@ -113,30 +167,84 @@ export function registerEnergyPlanRoute(app: FastifyInstance, deps: EnergyPlanDe
       const lowCloud = await fetchMorningLowCloud(HOUSE.lat, HOUSE.lon, date, deps.fetchImpl);
       const season = seasonOf(date);
       const expectedPv = lowCloud === null ? null : expectedPvKwh(season, cloudBand(lowCloud));
-      const pvRemainingKwh = expectedPv === null
-        ? null
-        : Math.max(0, expectedPv - producedPvKwh(deps.archive.listPowerSamples(date)));
+      const archive = deps.archive;
+      const samples = archive.listPowerSamples(date);
+      const soc = opening ? socAtOpen(archive, date) : socPercentFor(archive, date);
+      const produced = opening ? 0 : producedPvKwh(samples);
+      const pvRemainingKwh = expectedPv === null ? null : Math.max(0, expectedPv - produced);
       const today = pragueTimestamp(new Date()).slice(0, 10);
+      const lookAhead = !opening && date === today;
       const tomorrowDate = pragueDate(new Date(), 1);
-      const tomorrowCloud = date === today
+      const tomorrowCloud = lookAhead
         ? await fetchMorningLowCloud(HOUSE.lat, HOUSE.lon, tomorrowDate, deps.fetchImpl)
         : null;
       const tomorrowPvKwh = tomorrowCloud === null ? null : expectedPvKwh(seasonOf(tomorrowDate), cloudBand(tomorrowCloud));
-      const heating = deps.archive.latestHeating();
+      const heating = archive.latestHeating();
+      const openingTemperatureC = archive.listHeatingTemperatures(date)[0]?.temperatureC ?? null;
+      const startAt = lookAhead ? pragueClock(new Date()) : null;
+      const daylight = daylightDate(date, startAt);
+      const origin = daylight < date ? daylight : date;
+      const latest = daylight > date ? daylight : date;
+      const heatingPeriods = archive.listHeatingPeriodsOverlapping(
+        `${addDays(origin, -HOUSE_LOAD_DAYS)}T00:00:00`,
+        `${addDays(latest, 1)}T00:00:00`
+      );
+      const carChargeKw = await chargeKwLookup({
+        dates: houseLoadDates(date, daylight),
+        readChargeKw: deps.readChargeKw,
+        readCarDay: deps.readCarDay
+      });
+      const load = houseLoadForPlan({
+        planDate: date,
+        daylightDate: daylight,
+        readDay: (day) => archive.listPowerSamples(day),
+        tankOn: (at) => heaterIsOn(heatingPeriods, at),
+        carChargeKw
+      });
       const plan = buildEnergyPlan({
         prices,
-        tomorrowPrices: date === today ? deps.archive.listSpotPrices(pragueDate(new Date(), 1)) : [],
-        startAt: date === today ? pragueClock(new Date()) : null,
-        bottomTemperatureC: heating?.temperatureC ?? null,
-        aboveFloorKwh: aboveFloorKwh(socPercentFor(deps.archive, date)),
-        socPercent: socPercentFor(deps.archive, date),
+        tomorrowPrices: lookAhead ? archive.listSpotPrices(pragueDate(new Date(), 1)) : [],
+        startAt,
+        bottomTemperatureC: opening
+          ? (openingTemperatureC ?? heating?.temperatureC ?? null)
+          : (heating?.temperatureC ?? null),
+        openingTemperatureC,
+        aboveFloorKwh: aboveFloorKwh(soc),
+        socPercent: soc,
+        date,
+        nightHouseKwh: load.nightKwh,
+        daylightHouseKwh: load.daylightKwh,
         season,
         lowCloudPercent: lowCloud,
         pvRemainingKwh,
-        tomorrowPvKwh: date === today ? tomorrowPvKwh : null,
+        tomorrowPvKwh: lookAhead ? tomorrowPvKwh : null,
         car
       });
-      reply.status(200).type("text/plain; charset=utf-8").send(formatEnergyPlan(plan));
+      let sunCover: { from: string; to: string } | null = null;
+      if (deps.predictionStore) {
+        try {
+          await rememberSunHours({
+            store: deps.predictionStore,
+            fetchImpl: deps.fetchImpl,
+            apiKey: deps.forecastSolarApiKey,
+            timeoutMs: deps.timeoutMs,
+            now: new Date()
+          });
+        } catch {
+          sunCover = null;
+        }
+        const demand = houseKwByHour({
+          planDate: date,
+          readDay: (day) => archive.listPowerSamples(day),
+          tankOn: (at) => heaterIsOn(heatingPeriods, at),
+          carChargeKw
+        });
+        const aligned = alignSunCover(deps.predictionStore.listSunHours(date), demand);
+        sunCover = aligned.from && aligned.to ? { from: aligned.from, to: aligned.to } : null;
+      }
+      const text = formatEnergyPlan(plan);
+      const cover = sunCover ? `sunCoversFrom=${sunCover.from}\nsunCoversTo=${sunCover.to}\n` : "";
+      reply.status(200).type("text/plain; charset=utf-8").send(`${text}${cover}`);
     }
   });
 }

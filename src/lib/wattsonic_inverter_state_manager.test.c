@@ -99,9 +99,10 @@ void test_upper_half_goes_to_the_car_or_the_sale() {
     char* car = strstr(source, "sprintf(inverterState, \"Car takes the upper half\")");
     assert(car != NULL);
     assert(strstr(source, "planCarCommand >= 3") != NULL);
-    assert(strstr(source, "soc > UPPER_HALF_SOC") != NULL);
-    assert(strstr(source, "onGridEndSOCProtection = UPPER_HALF_SOC") != NULL);
-    assert(strstr(source, "onGridEndSOCProtection = UPPER_HALF_SOC") < car);
+    assert(strstr(source, "soc > reserveSoc") != NULL);
+    assert(strstr(source, "onGridEndSOCProtection = reserveSoc") != NULL);
+    assert(strstr(source, "VI_PLAN_RESERVE_SOC") != NULL);
+    assert(strstr(source, "onGridEndSOCProtection = reserveSoc") < car);
     assert(strstr(source, "sprintf(inverterState, \"House uses the battery\")") != NULL);
     assert(strstr(source, "onGridEndSOCProtection = onGridEndSOCProtectionUserSetting") != NULL);
     free(source);

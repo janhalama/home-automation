@@ -27,6 +27,9 @@ export type PowerReading = {
   meterKw: number;
   batteryKw: number;
   socPercent: number;
+  carChargeKw?: number | null;
+  tankKw?: number | null;
+  batteryChargeKw?: number | null;
 };
 
 export type HouseArchive = {
@@ -37,6 +40,7 @@ export type HouseArchive = {
   latestPowerSampleBefore(date: string): PowerReading | null;
   applyHeatingSample(sample: HeatingSample): void;
   listHeatingPeriods(date: string): HeatingPeriod[];
+  listHeatingPeriodsOverlapping(from: string, until: string): HeatingPeriod[];
   listHeatingTemperatures(date: string): { at: string; temperatureC: number }[];
   hasHeatingHistory(): boolean;
   latestHeating(): HeatingSample | null;
@@ -76,7 +80,27 @@ type PowerRow = {
   meter_kw: number;
   battery_kw: number;
   soc_percent: number;
+  car_charge_kw: number | null;
+  tank_kw: number | null;
+  battery_charge_kw: number | null;
 };
+
+type HeatingPeriodRow = {
+  started_at: string;
+  ended_at: string | null;
+  start_temperature_c: number;
+  end_temperature_c: number | null;
+};
+
+/* Map stored heater rows onto the period the rest of the API uses. */
+function readHeatingRows(rows: HeatingPeriodRow[]): HeatingPeriod[] {
+  return rows.map((row) => ({
+    startedAt: row.started_at,
+    endedAt: row.ended_at,
+    startTemperatureC: row.start_temperature_c,
+    endTemperatureC: row.end_temperature_c
+  }));
+}
 
 /* Map stored power rows onto the reading the rest of the API uses. */
 function readPowerRows(rows: PowerRow[]): PowerReading[] {
@@ -85,8 +109,25 @@ function readPowerRows(rows: PowerRow[]): PowerReading[] {
     pvKw: row.pv_kw,
     meterKw: row.meter_kw,
     batteryKw: row.battery_kw,
-    socPercent: row.soc_percent
+    socPercent: row.soc_percent,
+    carChargeKw: row.car_charge_kw,
+    tankKw: row.tank_kw,
+    batteryChargeKw: row.battery_charge_kw
   }));
+}
+
+/* Add the tank, car, and battery-charge columns to an archive created before them. */
+function ensureLoadColumns(database: DatabaseSync): void {
+  const names = new Set(
+    (database.prepare("PRAGMA table_info(power_samples)").all() as { name: string }[])
+      .map((column) => column.name)
+  );
+  if (!names.has("car_charge_kw"))
+    database.exec("ALTER TABLE power_samples ADD COLUMN car_charge_kw REAL");
+  if (!names.has("tank_kw"))
+    database.exec("ALTER TABLE power_samples ADD COLUMN tank_kw REAL");
+  if (!names.has("battery_charge_kw"))
+    database.exec("ALTER TABLE power_samples ADD COLUMN battery_charge_kw REAL");
 }
 
 /* Open the house archive and create its tables when they are missing. */
@@ -115,7 +156,10 @@ export function openHouseArchive(path: string): HouseArchive {
       pv_kw REAL NOT NULL,
       meter_kw REAL NOT NULL,
       battery_kw REAL NOT NULL,
-      soc_percent REAL NOT NULL
+      soc_percent REAL NOT NULL,
+      car_charge_kw REAL,
+      tank_kw REAL,
+      battery_charge_kw REAL
     );
     CREATE TABLE IF NOT EXISTS heating_latest (
       id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -128,6 +172,7 @@ export function openHouseArchive(path: string): HouseArchive {
       temperature_c REAL NOT NULL
     );
   `);
+  ensureLoadColumns(database);
 
   const savePrice = database.prepare(`
     INSERT INTO spot_prices (date, period_index, period_interval, eur_per_mwh)
@@ -162,6 +207,12 @@ export function openHouseArchive(path: string): HouseArchive {
     WHERE started_at LIKE ? OR ended_at LIKE ?
     ORDER BY started_at
   `);
+  const listOverlappingPeriods = database.prepare(`
+    SELECT started_at, ended_at, start_temperature_c, end_temperature_c
+    FROM heating_periods
+    WHERE started_at < ? AND (ended_at IS NULL OR ended_at > ?)
+    ORDER BY started_at
+  `);
   const countPeriods = database.prepare(`SELECT COUNT(*) AS count FROM heating_periods`);
   const saveLatest = database.prepare(`
     INSERT INTO heating_latest (id, at, heating_on, temperature_c)
@@ -183,22 +234,27 @@ export function openHouseArchive(path: string): HouseArchive {
     SELECT at, heating_on, temperature_c FROM heating_latest WHERE id = 1
   `);
   const savePower = database.prepare(`
-    INSERT INTO power_samples (at, pv_kw, meter_kw, battery_kw, soc_percent)
-    VALUES (?, ?, ?, ?, ?)
+    INSERT INTO power_samples (
+      at, pv_kw, meter_kw, battery_kw, soc_percent, car_charge_kw, tank_kw, battery_charge_kw
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(at) DO UPDATE SET
       pv_kw = excluded.pv_kw,
       meter_kw = excluded.meter_kw,
       battery_kw = excluded.battery_kw,
-      soc_percent = excluded.soc_percent
+      soc_percent = excluded.soc_percent,
+      car_charge_kw = excluded.car_charge_kw,
+      tank_kw = excluded.tank_kw,
+      battery_charge_kw = excluded.battery_charge_kw
   `);
   const listPower = database.prepare(`
-    SELECT at, pv_kw, meter_kw, battery_kw, soc_percent
+    SELECT at, pv_kw, meter_kw, battery_kw, soc_percent, car_charge_kw, tank_kw, battery_charge_kw
     FROM power_samples
     WHERE at LIKE ?
     ORDER BY at
   `);
   const latestPowerBefore = database.prepare(`
-    SELECT at, pv_kw, meter_kw, battery_kw, soc_percent
+    SELECT at, pv_kw, meter_kw, battery_kw, soc_percent, car_charge_kw, tank_kw, battery_charge_kw
     FROM power_samples
     WHERE at < ?
     ORDER BY at DESC
@@ -211,7 +267,17 @@ export function openHouseArchive(path: string): HouseArchive {
         savePrice.run(price.date, price.periodIndex, price.periodInterval, price.eurPerMwh);
     },
     savePowerSample(sample) {
-      savePower.run(sample.at, sample.pvKw, sample.meterKw, sample.batteryKw, sample.socPercent);
+      const batteryChargeKw = sample.batteryChargeKw ?? Math.max(0, -sample.batteryKw);
+      savePower.run(
+        sample.at,
+        sample.pvKw,
+        sample.meterKw,
+        sample.batteryKw,
+        sample.socPercent,
+        sample.carChargeKw ?? null,
+        sample.tankKw ?? null,
+        batteryChargeKw
+      );
     },
     listPowerSamples(date) {
       return readPowerRows(listPower.all(`${date}%`) as PowerRow[]);
@@ -253,18 +319,10 @@ export function openHouseArchive(path: string): HouseArchive {
       saveTemperature.run(sample.at, sample.temperatureC);
     },
     listHeatingPeriods(date) {
-      const rows = listPeriods.all(`${date}%`, `${date}%`) as Array<{
-        started_at: string;
-        ended_at: string | null;
-        start_temperature_c: number;
-        end_temperature_c: number | null;
-      }>;
-      return rows.map((row) => ({
-        startedAt: row.started_at,
-        endedAt: row.ended_at,
-        startTemperatureC: row.start_temperature_c,
-        endTemperatureC: row.end_temperature_c
-      }));
+      return readHeatingRows(listPeriods.all(`${date}%`, `${date}%`) as HeatingPeriodRow[]);
+    },
+    listHeatingPeriodsOverlapping(from, until) {
+      return readHeatingRows(listOverlappingPeriods.all(until, from) as HeatingPeriodRow[]);
     },
     listHeatingTemperatures(date) {
       const rows = listTemperatures.all(`${date}%`) as Array<{ at: string; temperature_c: number }>;

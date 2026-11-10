@@ -4,7 +4,7 @@ Tests for placing TeslaMate minutes onto the car chart.
 
 import { describe, expect, it } from "vitest";
 import { buildCarDay } from "../src/services/car-day.js";
-import { readCarDay, type CarDayQuery } from "../src/services/teslamate-history.js";
+import { chargeKwByQuarter, readCarDay, type CarDayQuery } from "../src/services/teslamate-history.js";
 
 describe("car day", () => {
   it("keeps the highest charge in a quarter and the latest state of charge", () => {
@@ -55,5 +55,20 @@ describe("car day", () => {
     });
     expect(points.find((point) => point.time === "03:00:00")?.chargeLimitPercent).toBeNull();
     expect(points.find((point) => point.time === "08:00:00")?.socPercent).toBe(54);
+  });
+
+  it("reads a span of charge power in one query and keeps it on the quarter", async () => {
+    let calls = 0;
+    const query: CarDayQuery = async (text, values) => {
+      calls += 1;
+      expect(text).not.toMatch(/positions|drives|usable_battery_level/);
+      expect(values).toEqual(["2026-11-01", "2026-11-04"]);
+      return [{ day: "2026-11-02", time: "20:17:00", charge_kw: 11 }];
+    };
+    const lookup = await chargeKwByQuarter(query, "2026-11-01", "2026-11-04");
+    expect(calls).toBe(1);
+    expect(lookup("2026-11-02T20:17:00")).toBe(11);
+    expect(lookup("2026-11-02T20:29:00")).toBe(11);
+    expect(lookup("2026-11-02T20:30:00")).toBe(0);
   });
 });

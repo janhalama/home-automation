@@ -8,6 +8,7 @@ TeslaMate stores no history of the charge limit, so this query does not ask for 
 
 import pg from "pg";
 import { buildCarDay, type CarPoint } from "./car-day.js";
+import { addDays } from "./sun-clock.js";
 
 const { Pool } = pg;
 
@@ -109,6 +110,98 @@ export function openCarDayQuery(config: {
       return result.rows as Record<string, unknown>[];
     },
     close: () => pool.end()
+  };
+}
+
+const CHARGE_SPAN_SQL = `
+  SELECT to_char(
+      (c.date AT TIME ZONE 'UTC') AT TIME ZONE 'Europe/Prague',
+      'YYYY-MM-DD'
+    ) AS day,
+    to_char(
+      date_trunc('minute', (c.date AT TIME ZONE 'UTC') AT TIME ZONE 'Europe/Prague'),
+      'HH24:MI:SS'
+    ) AS time,
+    max(c.charger_power) AS charge_kw
+  FROM charges c
+  JOIN charging_processes p ON p.id = c.charging_process_id
+  WHERE p.car_id = 1
+    AND (c.date AT TIME ZONE 'UTC') >= ($1::timestamp AT TIME ZONE 'Europe/Prague')
+    AND (c.date AT TIME ZONE 'UTC') < ($2::timestamp AT TIME ZONE 'Europe/Prague')
+  GROUP BY 1, 2
+`;
+
+/* Quarter start, YYYY-MM-DDTHH:MM, for a Prague timestamp. */
+function quarterKey(at: string): string {
+  const minute = Number(at.slice(14, 16));
+  const quarter = String(Math.floor(minute / 15) * 15).padStart(2, "0");
+  return `${at.slice(0, 14)}${quarter}`;
+}
+
+/* Highest charge power in each quarter. */
+function lookupFromRows(rows: { at: string; chargeKw: number }[]): (at: string) => number {
+  const quarters = new Map<string, number>();
+  for (const row of rows) {
+    if (!row.chargeKw)
+      continue;
+    const key = quarterKey(row.at);
+    quarters.set(key, Math.max(quarters.get(key) ?? 0, row.chargeKw));
+  }
+  return (at: string) => quarters.get(quarterKey(at)) ?? 0;
+}
+
+/* Charge power across a date span, in one query. untilDate is excluded. */
+export async function chargeKwByQuarter(
+  query: CarDayQuery,
+  fromDate: string,
+  untilDate: string
+): Promise<(at: string) => number> {
+  const rows = await query(CHARGE_SPAN_SQL, [fromDate, untilDate]);
+  return lookupFromRows(rows.map((row) => ({
+    at: `${String(row.day)}T${String(row.time)}`,
+    chargeKw: Number(row.charge_kw)
+  })));
+}
+
+/* One span query when the pool can do it, otherwise one full car day at a time. */
+export async function chargeKwLookup(input: {
+  dates: string[];
+  readChargeKw: ((fromDate: string, untilDate: string) => Promise<(at: string) => number>) | null;
+  readCarDay: ((date: string) => Promise<CarPoint[]>) | null;
+}): Promise<(at: string) => number> {
+  if (input.dates.length === 0)
+    return () => 0;
+  const ordered = [...input.dates].sort();
+  if (input.readChargeKw)
+    return input.readChargeKw(ordered[0], addDays(ordered[ordered.length - 1], 1));
+  if (input.readCarDay)
+    return carChargeKwAt(input.readCarDay, ordered);
+  return () => 0;
+}
+
+/* Charge power for each sample time, from the quarter TeslaMate recorded. A failed day contributes nothing. */
+export async function carChargeKwAt(
+  read: (date: string) => Promise<CarPoint[]>,
+  dates: string[]
+): Promise<(at: string) => number> {
+  const quarters = new Map<string, number>();
+  for (const date of dates) {
+    let points: CarPoint[] = [];
+    try {
+      points = await read(date);
+    } catch {
+      continue;
+    }
+    for (const point of points) {
+      if (!point.chargeKw || !point.time)
+        continue;
+      quarters.set(`${date}T${point.time.slice(0, 5)}`, point.chargeKw);
+    }
+  }
+  return (at: string) => {
+    const minute = Number(at.slice(14, 16));
+    const quarter = String(Math.floor(minute / 15) * 15).padStart(2, "0");
+    return quarters.get(`${at.slice(0, 14)}${quarter}`) ?? 0;
   };
 }
 

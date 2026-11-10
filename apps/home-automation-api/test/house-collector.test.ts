@@ -104,7 +104,10 @@ describe("collectHouseSnapshot", () => {
         pvKw: 0,
         meterKw: -0.5,
         batteryKw: 0.2,
-        socPercent: 30
+        socPercent: 30,
+        carChargeKw: null,
+        tankKw: 2.5,
+        batteryChargeKw: 0
       }
     ]);
     expect(archive.listHeatingPeriods("2026-10-26")).toEqual([

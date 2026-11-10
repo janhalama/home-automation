@@ -7,6 +7,8 @@
   --md-on-surface-variant: #49454f;
   --md-outline: #cac4d0;
   --md-error: #b3261e;
+  --skeleton: #ebe4f1;
+  --skeleton-shine: #f8f4fb;
   --shadow: 0 1px 2px rgb(0 0 0 / 12%), 0 1px 3px 1px rgb(0 0 0 / 8%);
   color: var(--md-on-surface);
   background: var(--md-surface);
@@ -120,8 +122,28 @@ button.quiet {
 }
 
 .stat strong {
+  display: block;
+  width: max-content;
+  min-width: 5ch;
+  line-height: 1.5;
+  white-space: nowrap;
   font-size: 22px;
   font-weight: 500;
+}
+
+.stat:has(strong.pending),
+.is-loading .stat {
+  background-color: var(--skeleton);
+  background-image: linear-gradient(100deg, var(--skeleton) 35%, var(--skeleton-shine) 50%, var(--skeleton) 65%);
+  background-size: 220% 100%;
+  animation: placeholder-shimmer 2.4s ease-in-out infinite;
+}
+
+.stat:has(strong.pending) span,
+.stat:has(strong.pending) strong,
+.is-loading .stat span,
+.is-loading .stat strong {
+  visibility: hidden;
 }
 
 .note, .status {
@@ -130,11 +152,71 @@ button.quiet {
   font-size: 14px;
 }
 
+#day-label:empty,
+#forecast-deviation:empty,
+#plan-line:empty,
+.is-loading #day-label,
+.is-loading #plan-line,
+.is-loading #forecast-deviation {
+  color: transparent;
+  border-radius: 8px;
+  background-color: var(--skeleton);
+  background-image: linear-gradient(100deg, var(--skeleton) 35%, var(--skeleton-shine) 50%, var(--skeleton) 65%);
+  background-size: 220% 100%;
+  animation: placeholder-shimmer 2.4s ease-in-out infinite;
+}
+
+#day-label:empty,
+#forecast-deviation:empty,
+#plan-line:empty {
+  min-height: 1.5em;
+}
+
+.status {
+  min-height: 1.5em;
+}
+
 .status.error { color: var(--md-error); }
 
-.chart-wrap {
+.chart-wrap,
+.day-row-chart {
   position: relative;
+  overflow: hidden;
+  border-radius: 12px;
+  background: var(--md-surface);
+}
+
+.chart-wrap {
   height: 280px;
+}
+
+.day-row-chart {
+  height: 140px;
+}
+
+.chart-wrap::before,
+.day-row-chart::before {
+  content: "";
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  pointer-events: none;
+  background-color: var(--skeleton);
+  background-image: linear-gradient(100deg, var(--skeleton) 35%, var(--skeleton-shine) 50%, var(--skeleton) 65%);
+  background-size: 220% 100%;
+  animation: placeholder-shimmer 2.4s ease-in-out infinite;
+}
+
+main:not(.is-loading) .day-row-chart:has(canvas)::before,
+main:not(.is-loading) .chart-wrap:has(canvas.drawn)::before {
+  display: none;
+}
+
+.chart-wrap canvas,
+.day-row-chart canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
 }
 
 .day-row {
@@ -147,7 +229,33 @@ button.quiet {
   font-weight: 500;
 }
 
-.day-row-chart {
-  position: relative;
-  height: 140px;
+@keyframes placeholder-shimmer {
+  0% { background-position: 100% 0; }
+  100% { background-position: -100% 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stat:has(strong.pending),
+  .is-loading .stat,
+  #day-label:empty,
+  #forecast-deviation:empty,
+  #plan-line:empty,
+  .is-loading #day-label,
+  .is-loading #plan-line,
+  .is-loading #forecast-deviation,
+  .chart-wrap::before,
+  .day-row-chart::before {
+    animation: none;
+  }
+}
+
+@media (max-width: 720px) {
+  #day-label:empty {
+    min-height: 3em;
+  }
+
+  #forecast-deviation:empty,
+  #plan-line:empty {
+    min-height: 4.5em;
+  }
 }

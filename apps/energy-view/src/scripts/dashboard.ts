@@ -2,7 +2,9 @@
 Loads one day and the live forecast from the energy API and draws them.
 */
 
+import { batteryChargeSentence } from "./battery-plan-series.ts";
 import { renderDayRows } from "./day-rows.ts";
+import { renderReserveHistory, type ReservePoint } from "./reserve-chart.ts";
 
 type EnergyPoint = {
   time: string;
@@ -71,6 +73,7 @@ type DayPlan = {
   batteryDischargeFrom: string | null;
   batteryDischargeTo: string | null;
   batteryDischargeKw: number;
+  reserveSoc: number | null;
 };
 const STORAGE_KEY = "energy-view-connection";
 const charts: Chart[] = [];
@@ -123,13 +126,15 @@ function parsePlan(text: string): DayPlan | null {
     batterySellKw: Number(values.get("batterySellKw") ?? 0),
     batteryDischargeFrom: clock("batteryDischargeFrom"),
     batteryDischargeTo: clock("batteryDischargeTo"),
-    batteryDischargeKw: Number(values.get("batteryDischargeKw") ?? 0)
+    batteryDischargeKw: Number(values.get("batteryDischargeKw") ?? 0),
+    reserveSoc: values.get("reserveSoc") ? Number(values.get("reserveSoc")) : null
   };
 }
 
-/* GET the plan as text. A failure leaves the charts without a plan. */
-async function loadPlan(apiBase: string, apiKey: string, day: string): Promise<DayPlan | null> {
-  const response = await fetch(`${apiBase}/api/energy/plan?date=${day}`, {
+/* GET the plan as text. asOf=open is the plan from the state of charge at the start of the day. */
+async function loadPlan(apiBase: string, apiKey: string, day: string, asOf?: "open"): Promise<DayPlan | null> {
+  const scope = asOf ? `&asOf=${asOf}` : "";
+  const response = await fetch(`${apiBase}/api/energy/plan?date=${day}${scope}`, {
     headers: { "X-API-Key": apiKey }
   });
   if (!response.ok)
@@ -183,7 +188,7 @@ function renderDayLabel(day: string, hasReality: boolean): void {
 }
 
 /* One sentence under the price chart. */
-function renderPlanLine(plan: DayPlan | null): void {
+function renderPlanLine(plan: DayPlan | null, opening: DayPlan | null, recordedUntilMinute: number | null): void {
   const line = document.querySelector("#plan-line");
   if (!line)
     return;
@@ -193,19 +198,18 @@ function renderPlanLine(plan: DayPlan | null): void {
   }
   const slot = (label: string, from: string | null, to: string | null, extra = "") =>
     from && to ? `${label} ${from}–${to}${extra}` : `${label} off`;
-  const charge = plan.batteryFrom && plan.batteryTo
-    ? `Battery charge ${plan.batteryFrom}–${plan.batteryTo} at ${plan.batteryKw.toFixed(1)} kW`
-    : "Battery charge off";
+  const charge = batteryChargeSentence(plan, opening, recordedUntilMinute);
   const discharge = plan.batteryDischargeFrom && plan.batteryDischargeTo
     ? `Battery covers the house ${plan.batteryDischargeFrom}–${plan.batteryDischargeTo} at ${plan.batteryDischargeKw.toFixed(2)} kW`
     : "No battery discharge";
+  const reserveText = plan.reserveSoc === null ? "the reserve" : `${plan.reserveSoc.toFixed(0)}%`;
   const carText = plan.car === "battery"
-    ? `Obluda takes the house battery at ${plan.carKw.toFixed(0)} kW, more when the sun covers it, down to 50%${plan.carFrom && plan.carTo ? `, about ${plan.carFrom}–${plan.carTo}` : ""}`
+    ? `Obluda takes the house battery at ${plan.carKw.toFixed(0)} kW, more when the sun covers it, down to ${reserveText}${plan.carFrom && plan.carTo ? `, about ${plan.carFrom}–${plan.carTo}` : ""}`
     : plan.car === "surplus"
       ? "Obluda takes leftover sun while the battery is above 30%"
       : slot("Obluda", plan.carFrom, plan.carTo, ` at ${plan.carKw.toFixed(0)} kW`);
   const sale = plan.batterySellFrom && plan.batterySellTo
-    ? `Battery sale ${plan.batterySellFrom}–${plan.batterySellTo} at ${plan.batterySellKw.toFixed(0)} kW, down to 50%`
+    ? `Battery sale ${plan.batterySellFrom}–${plan.batterySellTo} at ${plan.batterySellKw.toFixed(0)} kW, down to ${reserveText}`
     : "Battery sale off";
   line.textContent = [
     slot("Tank plan", plan.tankFrom, plan.tankTo),
@@ -304,6 +308,15 @@ async function loadCarPoints(apiBase: string, apiKey: string, day: string): Prom
   }
 }
 
+/* Cover the reserved cards and charts while a fetch is in flight. */
+function setPageLoading(isLoading: boolean): void {
+  const main = document.querySelector("main");
+  if (!main)
+    return;
+  main.classList.toggle("is-loading", isLoading);
+  main.setAttribute("aria-busy", isLoading ? "true" : "false");
+}
+
 /* Load the live state and the selected day. */
 async function loadDay(event?: Event): Promise<void> {
   event?.preventDefault();
@@ -312,28 +325,46 @@ async function loadDay(event?: Event): Promise<void> {
   const apiKey = (document.querySelector("#api-key") as HTMLInputElement).value;
   const day = (document.querySelector("#day") as HTMLInputElement).value;
   saveSettings(apiBase, apiKey);
-  if (status)
-    status.textContent = "Loading…";
+  setPageLoading(true);
+  if (status) {
+    status.className = "status";
+    status.textContent = "";
+  }
   try {
-    const [live, series, plan, car] = await Promise.all([
+    const today = day === pragueToday();
+    const [live, series, livePlan, openingPlan, car, reserve, sunCover] = await Promise.all([
       loadJson<LiveResponse>(apiBase, apiKey, "/api/energy/live"),
       loadJson<SeriesResponse>(apiBase, apiKey, `/api/energy/series?date=${day}`),
-      loadPlan(apiBase, apiKey, day),
-      loadCarPoints(apiBase, apiKey, day)
+      today ? loadPlan(apiBase, apiKey, day) : Promise.resolve(null),
+      loadPlan(apiBase, apiKey, day, "open"),
+      loadCarPoints(apiBase, apiKey, day),
+      loadJson<{ days: ReservePoint[] }>(apiBase, apiKey, `/api/energy/reserve-history?date=${day}`),
+      loadJson<{ from: string | null; to: string | null; points: { time: string; pvKw: number; houseKw: number }[] }>(
+        apiBase,
+        apiKey,
+        `/api/energy/sun-cover?date=${day}`
+      ).catch(() => ({ from: null, to: null, points: [] }))
     ]);
+    const plan = livePlan ?? openingPlan;
+    const reserveCanvas = document.querySelector("#reserve-history");
+    if (reserveCanvas instanceof HTMLCanvasElement)
+      renderReserveHistory(reserveCanvas, reserve.days);
     renderLive(live);
     renderScores(series);
     const hasReality = series.points.some((point) => point.pvKw !== null || point.meterKw !== null);
     renderDayLabel(day, hasReality);
-    renderPlanLine(plan);
+    const recordedUntilMinute = today ? pragueMinutesNow() : null;
+    renderPlanLine(plan, openingPlan, recordedUntilMinute);
     const rows = document.querySelector("#day-rows");
     if (rows)
       renderDayRows(rows as HTMLElement, {
         points: series.points.map((point) => ({ ...point, tankTemperatureC: point.tankTemperatureC ?? null })),
         plan,
+        openingPlan,
         car,
-        forecastKwh: day === pragueToday() ? live.todayKwh : null,
-        recordedUntilMinute: day === pragueToday() ? pragueMinutesNow() : null
+        forecastKwh: today ? live.todayKwh : null,
+        sunCover,
+        recordedUntilMinute
       });
     const missing = series.points.length === 0
       ? "This day has no prices yet, so there is no plan to draw."
@@ -348,6 +379,8 @@ async function loadDay(event?: Event): Promise<void> {
       status.className = "status error";
       status.textContent = error instanceof Error ? error.message : "The day could not be loaded.";
     }
+  } finally {
+    setPageLoading(false);
   }
 }
 

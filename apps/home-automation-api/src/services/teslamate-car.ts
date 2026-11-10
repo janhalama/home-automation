@@ -18,6 +18,8 @@ const CAR_TOPICS = [
   "teslamate/cars/1/geofence"
 ];
 
+const CHARGER_POWER_TOPIC = "teslamate/cars/1/charger_power";
+
 /* Read one MQTT remaining-length field. A short buffer returns null. */
 function readRemainingLength(packet: Buffer, offset: number): { length: number; next: number } | null {
   let multiplier = 1;
@@ -111,10 +113,21 @@ function encodeRemainingLength(length: number): Buffer {
   return Buffer.from(bytes);
 }
 
+/* Kilowatts TeslaMate last published for the wallbox. */
+export function chargerPowerFromMessages(messages: MqttMessage[]): number {
+  const message = messages.find((item) => item.topic.endsWith("/charger_power"));
+  if (!message)
+    throw new Error("TeslaMate did not publish charger_power");
+  const power = Number(message.payload);
+  if (!Number.isFinite(power) || power < 0)
+    throw new Error("TeslaMate charger power is not a number");
+  return power;
+}
+
 /* MQTT SUBSCRIBE for the retained car topics. */
-function encodeSubscribe(): Buffer {
+function encodeSubscribe(topics: string[]): Buffer {
   const parts = [Buffer.from([0x00, 0x01])];
-  for (const topic of CAR_TOPICS) {
+  for (const topic of topics) {
     const bytes = Buffer.from(topic);
     parts.push(Buffer.from([bytes.length >> 8, bytes.length & 0xff]), bytes, Buffer.from([0x00]));
   }
@@ -145,7 +158,7 @@ export function readTeslaMateCar(host: string, port = 1883, timeoutMs = 4000): P
     };
     socket.on("connect", () => {
       socket.write(encodeConnect());
-      socket.write(encodeSubscribe());
+      socket.write(encodeSubscribe(CAR_TOPICS));
     });
     socket.on("data", (chunk: Buffer) => {
       pending = Buffer.from(Buffer.concat([pending, chunk]));
@@ -157,6 +170,48 @@ export function readTeslaMateCar(host: string, port = 1883, timeoutMs = 4000): P
         settle(undefined, reading);
       } catch (error) {
         if (error instanceof Error && error.message.startsWith("TeslaMate charge"))
+          settle(error);
+      }
+    });
+    socket.on("error", (error) => settle(error));
+    socket.on("close", () => settle(new Error("TeslaMate did not answer")));
+  });
+}
+
+/* Subscribe and return the retained wallbox power. Zero means the car is not charging. */
+export function readTeslaMateChargerPower(host: string, port = 1883, timeoutMs = 4000): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const socket = net.connect({ host, port });
+    let pending: Buffer = Buffer.alloc(0);
+    let settled = false;
+    const messages: MqttMessage[] = [];
+    const timer = setTimeout(() => {
+      settle(new Error("TeslaMate did not answer"));
+    }, timeoutMs);
+    const settle = (error?: Error, power?: number) => {
+      if (settled)
+        return;
+      settled = true;
+      clearTimeout(timer);
+      socket.end();
+      if (power !== undefined)
+        resolve(power);
+      else
+        reject(error ?? new Error("TeslaMate did not answer"));
+    };
+    socket.on("connect", () => {
+      socket.write(encodeConnect());
+      socket.write(encodeSubscribe([CHARGER_POWER_TOPIC]));
+    });
+    socket.on("data", (chunk: Buffer) => {
+      pending = Buffer.from(Buffer.concat([pending, chunk]));
+      const taken = takeMqttPublishes(pending);
+      pending = Buffer.from(taken.rest);
+      messages.push(...taken.messages);
+      try {
+        settle(undefined, chargerPowerFromMessages(messages));
+      } catch (error) {
+        if (error instanceof Error && error.message === "TeslaMate charger power is not a number")
           settle(error);
       }
     });

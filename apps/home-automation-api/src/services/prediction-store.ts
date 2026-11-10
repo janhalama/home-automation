@@ -8,10 +8,18 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import type { LearnedDay } from "./pv-forecast-learning.js";
 
+export type SunHour = {
+  at: string;
+  pvKw: number;
+};
+
 export type PredictionStore = {
   saveForecast(day: LearnedDay): void;
   saveActual(date: string, actualKwh: number): void;
   listCompleted(): LearnedDay[];
+  saveSunHours(hours: SunHour[], issuedAt: string): void;
+  listSunHours(date: string): SunHour[];
+  latestSunIssuedAt(): string | null;
   close(): void;
 };
 
@@ -26,6 +34,11 @@ export function openPredictionStore(path: string): PredictionStore {
       forecast_kwh REAL NOT NULL,
       low_cloud REAL,
       actual_kwh REAL
+    );
+    CREATE TABLE IF NOT EXISTS sun_hours (
+      at TEXT PRIMARY KEY,
+      pv_kw REAL NOT NULL,
+      issued_at TEXT NOT NULL
     )
   `);
 
@@ -44,6 +57,14 @@ export function openPredictionStore(path: string): PredictionStore {
     FROM forecast_days
     WHERE actual_kwh IS NOT NULL AND low_cloud IS NOT NULL
   `);
+  const removeSunDay = database.prepare(`DELETE FROM sun_hours WHERE at LIKE ?`);
+  const insertSunHour = database.prepare(`
+    INSERT INTO sun_hours (at, pv_kw, issued_at) VALUES (?, ?, ?)
+  `);
+  const listSunHours = database.prepare(`
+    SELECT at, pv_kw FROM sun_hours WHERE at LIKE ? ORDER BY at
+  `);
+  const latestSunIssued = database.prepare(`SELECT MAX(issued_at) AS issued_at FROM sun_hours`);
 
   return {
     saveForecast(day) {
@@ -65,6 +86,21 @@ export function openPredictionStore(path: string): PredictionStore {
         lowCloud: row.low_cloud,
         actualKwh: row.actual_kwh
       }));
+    },
+    saveSunHours(hours, issuedAt) {
+      const dates = [...new Set(hours.map((hour) => hour.at.slice(0, 10)))];
+      for (const date of dates)
+        removeSunDay.run(`${date}%`);
+      for (const hour of hours)
+        insertSunHour.run(hour.at, hour.pvKw, issuedAt);
+    },
+    listSunHours(date) {
+      const rows = listSunHours.all(`${date}%`) as Array<{ at: string; pv_kw: number }>;
+      return rows.map((row) => ({ at: row.at, pvKw: row.pv_kw }));
+    },
+    latestSunIssuedAt() {
+      const row = latestSunIssued.get() as { issued_at: string | null } | undefined;
+      return row?.issued_at ?? null;
     },
     close() {
       database.close();

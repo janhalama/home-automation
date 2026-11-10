@@ -3,8 +3,30 @@ Tests for the tank, car, and battery lines of one plan.
 */
 
 import { describe, expect, it } from "vitest";
-import { buildEnergyPlan, formatEnergyPlan } from "../src/services/energy-plan.js";
+import { buildEnergyPlan as planWithLoad, formatEnergyPlan } from "../src/services/energy-plan.js";
 import type { SpotPrice } from "../src/services/ote-day-ahead.js";
+import { daylightHouseKwh, nightHouseKwh } from "../src/services/seasonal-profile.js";
+import { sunClocks } from "../src/services/sun-clock.js";
+
+/* Hours of dark and of daylight at the house. */
+function sunHours(date: string): { night: number; daylight: number } {
+  const sun = sunClocks(date);
+  const minutes = (clock: string) => Number(clock.slice(0, 2)) * 60 + Number(clock.slice(3, 5));
+  const daylight = (minutes(sun.set) - minutes(sun.rise)) / 60;
+  return { night: 24 - daylight, daylight };
+}
+
+type PlanInput = Parameters<typeof planWithLoad>[0];
+
+/* Existing cases keep the seasonal night and daylight so the reserve stays where it was. */
+function buildEnergyPlan(input: Omit<PlanInput, "date" | "nightHouseKwh" | "daylightHouseKwh"> & Partial<Pick<PlanInput, "date" | "nightHouseKwh" | "daylightHouseKwh">>) {
+  return planWithLoad({
+    date: "2026-07-30",
+    nightHouseKwh: nightHouseKwh(input.season),
+    daylightHouseKwh: daylightHouseKwh(input.season),
+    ...input
+  });
+}
 
 function prices(intervals: Array<[string, number]>): SpotPrice[] {
   return intervals.map(([periodInterval, eurPerMwh], index) => ({
@@ -71,6 +93,9 @@ describe("energy plan", () => {
   it("leaves 1 kW for the house and charges the battery at 2.5 kW when the tank and the car are on", () => {
     const plan = buildEnergyPlan({
       prices: night,
+      date: "2026-07-30",
+      nightHouseKwh: 4 * sunHours("2026-07-30").night,
+      daylightHouseKwh: 0,
       bottomTemperatureC: 40,
       aboveFloorKwh: 0,
       season: "autumn",
@@ -145,7 +170,7 @@ describe("energy plan", () => {
     expect(plan.carTo).toBe("00:30");
   });
 
-  it("keeps the tank on today through 06:00 when tomorrow morning is cheaper", () => {
+  it("moves the tank to the next morning when today's window has passed", () => {
     const today = prices([
       ["01:15-01:30", 40],
       ["01:30-01:45", 40],
@@ -173,8 +198,8 @@ describe("energy plan", () => {
       car: { missingKwh: 0, pluggedIn: false, atHome: true }
     });
     expect(plan.tank).toBe("on");
-    expect(plan.tankFrom).toBe("01:15");
-    expect(plan.tankTo).toBe("02:45");
+    expect(plan.tankFrom).toBe("00:00");
+    expect(plan.tankTo).toBe("01:30");
   });
 
   it("still heats a 45°C tank up to 55°C", () => {
@@ -193,7 +218,10 @@ describe("energy plan", () => {
 
   it("gives the car the upper half of the house battery and does not sell that energy", () => {
     const plan = buildEnergyPlan({
-      prices: night,
+      prices: prices([
+        ["14:00-14:15", 100],
+        ["18:00-18:15", 140]
+      ]),
       bottomTemperatureC: 55,
       aboveFloorKwh: 15,
       socPercent: 100,
@@ -207,6 +235,27 @@ describe("energy plan", () => {
     expect(plan.carFrom).toBeNull();
     expect(plan.batterySellKw).toBe(0);
     expect(formatEnergyPlan(plan)).toContain("car=battery\n");
+  });
+
+  it("sells the battery and buys the car when the peak is still ahead and the gap clears 3 Kč/kWh", () => {
+    const plan = buildEnergyPlan({
+      prices: night,
+      startAt: "00:30",
+      bottomTemperatureC: 55,
+      aboveFloorKwh: 15,
+      socPercent: 100,
+      season: "autumn",
+      lowCloudPercent: 90,
+      pvRemainingKwh: 0,
+      car: { missingKwh: 5, pluggedIn: true, atHome: true }
+    });
+    expect(plan.car).toBe("on");
+    expect(plan.carKw).toBe(11);
+    expect(plan.carFrom).toBe("14:00");
+    expect(plan.carTo).toBe("14:30");
+    expect(plan.batterySellFrom).toBe("01:00");
+    expect(plan.batterySellTo).toBe("01:15");
+    expect(plan.batterySellKw).toBe(8);
   });
 
   it("buys only the room the remaining sun will not fill", () => {
@@ -248,7 +297,7 @@ describe("energy plan", () => {
     expect(plan.batteryKw).toBe(0);
   });
 
-  it("draws the car from now for the energy above 50% and skips a cheap hour that has passed", () => {
+  it("does not start the car on the expensive hour after the cheap hour has passed", () => {
     const plan = buildEnergyPlan({
       prices: prices([
         ["03:30-03:45", 100],
@@ -260,14 +309,146 @@ describe("energy plan", () => {
       socPercent: 85,
       season: "autumn",
       lowCloudPercent: 0,
+      pvRemainingKwh: 15,
+      car: { missingKwh: 5, pluggedIn: true, atHome: true }
+    });
+    expect(plan.car).toBe("surplus");
+    expect(plan.carKw).toBe(0);
+    expect(plan.carFrom).toBeNull();
+    expect(plan.reserveSoc).toBe(53.7);
+    expect(plan.battery).toBe("hold");
+  });
+
+  it("buys the car in a later cheap hour instead of starting it during the peak", () => {
+    const plan = buildEnergyPlan({
+      prices: prices([
+        ["17:00-17:15", 640],
+        ["17:15-17:30", 640],
+        ["23:30-23:45", 220],
+        ["23:45-24:00", 220]
+      ]),
+      startAt: "17:20",
+      bottomTemperatureC: 55,
+      aboveFloorKwh: 12,
+      socPercent: 80,
+      season: "autumn",
+      lowCloudPercent: 90,
       pvRemainingKwh: 0,
       car: { missingKwh: 5, pluggedIn: true, atHome: true }
     });
-    expect(plan.car).toBe("battery");
-    expect(plan.carKw).toBe(6);
-    expect(plan.carFrom).toBe("18:15");
-    expect(plan.carTo).toBe("19:30");
-    expect(plan.battery).toBe("hold");
+    expect(plan.car).toBe("on");
+    expect(plan.carKw).toBe(11);
+    expect(plan.carFrom).toBe("23:30");
+    expect(plan.carTo).toBe("24:00");
+  });
+
+  it("keeps the morning tank window while the clock is still inside it", () => {
+    const quarters: Array<[string, number]> = [];
+    for (let index = 0; index < 12; index += 1) {
+      const start = 60 + index * 15;
+      const clock = (minute: number) =>
+        `${String(Math.floor(minute / 60)).padStart(2, "0")}:${String(minute % 60).padStart(2, "0")}`;
+      quarters.push([`${clock(start)}-${clock(start + 15)}`, 10]);
+    }
+    quarters.push(["18:00-18:15", 400]);
+    const plan = buildEnergyPlan({
+      prices: prices(quarters),
+      startAt: "02:30",
+      bottomTemperatureC: 40,
+      openingTemperatureC: 23,
+      aboveFloorKwh: 10,
+      season: "autumn",
+      lowCloudPercent: 90,
+      car: { missingKwh: 0, pluggedIn: true, atHome: true }
+    });
+    expect(plan.tank).toBe("on");
+    expect(plan.tankFrom).toBe("01:00");
+    expect(plan.tankTo).toBe("04:00");
+  });
+
+  it("books the next morning once today's tank window has passed and the tank is cold", () => {
+    const tomorrow: Array<[string, number]> = [];
+    for (let index = 0; index < 16; index += 1) {
+      const start = index * 15;
+      const clock = (minute: number) =>
+        `${String(Math.floor(minute / 60)).padStart(2, "0")}:${String(minute % 60).padStart(2, "0")}`;
+      tomorrow.push([`${clock(start)}-${clock(start + 15)}`, 10]);
+    }
+    const plan = buildEnergyPlan({
+      prices: prices([
+        ["01:00-01:15", 10],
+        ["18:00-18:15", 400]
+      ]),
+      tomorrowPrices: prices(tomorrow),
+      startAt: "18:30",
+      bottomTemperatureC: 16,
+      openingTemperatureC: 23,
+      aboveFloorKwh: 10,
+      season: "autumn",
+      lowCloudPercent: 90,
+      car: { missingKwh: 0, pluggedIn: true, atHome: true }
+    });
+    expect(plan.tank).toBe("on");
+    expect(plan.tankFrom).toBe("00:00");
+    expect(plan.tankTo).toBe("03:45");
+  });
+
+  it("sells the peak once the planned charge covers the reserve and the peak", () => {
+    const clock = (minute: number) =>
+      `${String(Math.floor(minute / 60)).padStart(2, "0")}:${String(minute % 60).padStart(2, "0")}`;
+    const cheap = Array.from({ length: 20 }, (_, index) => {
+      const start = 2 * 60 + index * 15;
+      return [`${clock(start)}-${clock(start + 15)}`, 10] as [string, number];
+    });
+    const plan = buildEnergyPlan({
+      prices: prices([
+        ...cheap,
+        ["16:00-16:15", 640],
+        ["16:15-16:30", 630]
+      ]),
+      date: "2026-11-10",
+      bottomTemperatureC: 55,
+      aboveFloorKwh: 1,
+      socPercent: 25,
+      season: "autumn",
+      lowCloudPercent: 90,
+      pvRemainingKwh: 0,
+      nightHouseKwh: 2,
+      daylightHouseKwh: 0,
+      car: { missingKwh: 0, pluggedIn: true, atHome: true }
+    });
+    expect(plan.battery).toBe("grid-charge");
+    expect(plan.batteryTo !== null && plan.batteryTo <= "16:00").toBe(true);
+    expect(plan.batterySellFrom).toBe("16:00");
+    expect(plan.batterySellKw).toBe(8);
+    expect(plan.reserveSoc).toBeGreaterThan(25);
+  });
+
+  it("keeps the night reserve when the cheap hours run long", () => {
+    const plan = buildEnergyPlan({
+      prices: prices([
+        ["16:00-16:15", 640],
+        ["16:15-16:30", 620],
+        ["22:00-22:15", 230],
+        ["22:15-22:30", 230],
+        ["22:30-22:45", 240],
+        ["22:45-23:00", 230]
+      ]),
+      startAt: "12:00",
+      bottomTemperatureC: 55,
+      aboveFloorKwh: 10,
+      socPercent: 100,
+      season: "autumn",
+      lowCloudPercent: 90,
+      pvRemainingKwh: 1,
+      nightHouseKwh: 12,
+      daylightHouseKwh: 6,
+      car: { missingKwh: 0, pluggedIn: true, atHome: true }
+    });
+    expect(plan.reserveSoc).toBe(100);
+    expect(plan.batteryHoldFrom).toBeNull();
+    expect(plan.batteryHoldTo).toBeNull();
+    expect(formatEnergyPlan(plan)).toContain("batteryHold=0\n");
   });
 
   it("keeps the battery when the day's prices stay within 3 Kč/kWh", () => {
@@ -322,12 +503,12 @@ describe("energy plan", () => {
     expect(plan.batterySellKw).toBe(8);
   });
 
-  it("keeps the house reserve when the battery is at or below 50%", () => {
+  it("keeps the house reserve when the battery is at or below the sunless-day line", () => {
     const plan = buildEnergyPlan({
       prices: night,
       bottomTemperatureC: 55,
       aboveFloorKwh: 5,
-      socPercent: 50,
+      socPercent: 35,
       season: "autumn",
       lowCloudPercent: 90,
       pvRemainingKwh: 1,
@@ -442,6 +623,9 @@ describe("energy plan", () => {
   it("leaves the car limited when TeslaMate cannot be read and buys the battery in the daytime", () => {
     const plan = buildEnergyPlan({
       prices: night,
+      date: "2026-07-30",
+      nightHouseKwh: 4 * sunHours("2026-07-30").night,
+      daylightHouseKwh: 0,
       bottomTemperatureC: 55,
       aboveFloorKwh: 0,
       season: "autumn",
@@ -453,5 +637,90 @@ describe("energy plan", () => {
     expect(plan.battery).toBe("grid-charge");
     expect(plan.batteryFrom).toBe("14:00");
     expect(plan.batteryTo).toBe("14:45");
+  });
+
+  it("buys the house shortfall when the gap is above 2 Kč/kWh and the battery does not hold it", () => {
+    const date = "2026-11-08";
+    const plan = buildEnergyPlan({
+      prices: prices([
+        ["02:00-02:15", 10],
+        ["18:00-18:15", 110]
+      ]),
+      date,
+      nightHouseKwh: sunHours(date).night,
+      daylightHouseKwh: 0,
+      bottomTemperatureC: 55,
+      aboveFloorKwh: 0,
+      socPercent: 20,
+      season: "autumn",
+      lowCloudPercent: 90,
+      pvRemainingKwh: 0,
+      car: { missingKwh: 0, pluggedIn: true, atHome: true }
+    });
+    expect(plan.battery).toBe("grid-charge");
+    expect(plan.batteryFrom).toBe("02:00");
+    expect(plan.batteryTo).toBe("02:15");
+  });
+
+  it("does not buy for the house when the gap is 2 Kč/kWh or less", () => {
+    const plan = buildEnergyPlan({
+      prices: prices([
+        ["02:00-02:15", 10],
+        ["18:00-18:15", 90]
+      ]),
+      date: "2026-11-08",
+      nightHouseKwh: 20,
+      daylightHouseKwh: 10,
+      bottomTemperatureC: 55,
+      aboveFloorKwh: 0,
+      socPercent: 20,
+      season: "autumn",
+      lowCloudPercent: 90,
+      pvRemainingKwh: 0,
+      car: { missingKwh: 0, pluggedIn: true, atHome: true }
+    });
+    expect(plan.battery).toBe("hold");
+  });
+
+  it("does not buy when the battery already holds the expensive hours", () => {
+    const plan = buildEnergyPlan({
+      prices: night,
+      date: "2026-07-30",
+      nightHouseKwh: 4 * sunHours("2026-07-30").night,
+      daylightHouseKwh: 0,
+      bottomTemperatureC: 55,
+      aboveFloorKwh: 5,
+      socPercent: 50,
+      season: "autumn",
+      lowCloudPercent: 90,
+      pvRemainingKwh: 20,
+      car: { missingKwh: 0, pluggedIn: true, atHome: true }
+    });
+    expect(plan.battery).toBe("hold");
+  });
+
+  it("buys the larger of the house shortfall and the room the sun will not fill", () => {
+    const plan = buildEnergyPlan({
+      prices: prices([
+        ["12:00-12:15", 200],
+        ["14:00-14:15", 10],
+        ["14:15-14:30", 10],
+        ["14:30-14:45", 10],
+        ["14:45-15:00", 10]
+      ]),
+      date: "2026-07-30",
+      nightHouseKwh: 0,
+      daylightHouseKwh: 10 * sunHours("2026-07-30").daylight,
+      bottomTemperatureC: 55,
+      aboveFloorKwh: 0,
+      socPercent: 89,
+      season: "autumn",
+      lowCloudPercent: 0,
+      pvRemainingKwh: 1,
+      car: { missingKwh: 0, pluggedIn: true, atHome: true }
+    });
+    expect(plan.battery).toBe("grid-charge");
+    expect(plan.batteryFrom).toBe("14:00");
+    expect(plan.batteryTo).toBe("15:00");
   });
 });

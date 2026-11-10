@@ -21,7 +21,7 @@
  - Output 2: Tank command. 1 heat, 0 stay off, -1 the tank block keeps its limited rule
  - Output 3: Car command. 1 grid slot, 2 leftover sun, 3 the upper half of the house battery, 0 stay off, -1 the car block keeps its own rule
  - Output 4: Car power cap in kW while the car command is 1
- - Output 5: Battery command. 1 charge, -1 sell, 0 neither
+ - Output 5: Battery command. 1 charge, -1 sell, 2 hold so the house takes the grid, 0 neither
  - Output 6: Battery charge power in kW while output 5 is on
  - Text output 1: Requested address, without the API key
  - Text output 2: Response body
@@ -55,6 +55,7 @@
 #define VI_PLAN_CAR_KW "VI19"
 #define VI_PLAN_BATTERY_CHARGE "VI20"
 #define VI_PLAN_BATTERY_KW "VI21"
+#define VI_PLAN_RESERVE_SOC "VI22"
 
 #define FETCH_SECONDS 900
 #define RETRY_SECONDS 60
@@ -75,11 +76,28 @@ char batterySellFlag[8];
 char batterySellFrom[8];
 char batterySellTo[8];
 char batterySellKwText[16];
+char batteryHoldFlag[8];
+char batteryHoldFrom[8];
+char batteryHoldTo[8];
+char reserveSocText[16];
 int hasPlan;
 int fetchFailed;
 int sinceFetch;
 int sinceAttempt;
 char lastError[80];
+char pollErrorCode[32];
+
+/* Tell the API why this pull failed. A short code keeps the key's request small. */
+void reportPollError(char* serverAddress, char* apiKey) {
+    char url[512];
+    char* response;
+    if (pollErrorCode[0] == 0)
+        return;
+    sprintf(url, "/api/energy/plan-log?apiKey=%s&error=%s", apiKey, pollErrorCode);
+    response = httpget(serverAddress, url);
+    if (response != NULL)
+        free(response);
+}
 
 /* Skip HTTP response headers and return the body. */
 char* skipHeaders(char* response) {
@@ -148,12 +166,14 @@ int pullPlan(char* serverAddress, char* apiKey) {
     response = httpget(serverAddress, url);
     if (response == NULL) {
         sprintf(lastError, "error: no response from server");
+        sprintf(pollErrorCode, "no_response");
         setoutputtext(DEBUG_RESPONSE, "");
         return 0;
     }
     body = skipHeaders(response);
     if (body == NULL) {
         sprintf(lastError, "error: no response from server");
+        sprintf(pollErrorCode, "no_response");
         setoutputtext(DEBUG_RESPONSE, "");
         free(response);
         return 0;
@@ -161,10 +181,12 @@ int pullPlan(char* serverAddress, char* apiKey) {
     setoutputtext(DEBUG_RESPONSE, body);
     if (strstr(body, "tank=") == NULL) {
         sprintf(lastError, "error: unexpected response");
+        sprintf(pollErrorCode, "unexpected_response");
         free(response);
         return 0;
     }
     lastError[0] = 0;
+    pollErrorCode[0] = 0;
     copyValue(body, "tank", tankFlag, 16);
     copyValue(body, "tankFrom", tankFrom, 8);
     copyValue(body, "tankTo", tankTo, 8);
@@ -180,6 +202,10 @@ int pullPlan(char* serverAddress, char* apiKey) {
     copyValue(body, "batterySellFrom", batterySellFrom, 8);
     copyValue(body, "batterySellTo", batterySellTo, 8);
     copyValue(body, "batterySellKw", batterySellKwText, 16);
+    copyValue(body, "batteryHold", batteryHoldFlag, 8);
+    copyValue(body, "batteryHoldFrom", batteryHoldFrom, 8);
+    copyValue(body, "batteryHoldTo", batteryHoldTo, 8);
+    copyValue(body, "reserveSoc", reserveSocText, 16);
     hasPlan = 1;
     free(response);
     return 1;
@@ -225,6 +251,8 @@ void publishPlan() {
     } else if (fresh && batterySellFlag[0] == '1' && insideSlot(now, batterySellFrom, batterySellTo)) {
         batteryCharge = -1;
         batteryKw = atof(batterySellKwText);
+    } else if (fresh && batteryHoldFlag[0] == '1' && insideSlot(now, batteryHoldFrom, batteryHoldTo)) {
+        batteryCharge = 2;
     }
     setoutput(OUTPUT_FRESH, fresh);
     setoutput(OUTPUT_TANK_COMMAND, tankCommand);
@@ -238,6 +266,7 @@ void publishPlan() {
     setio(VI_PLAN_CAR_KW, carKw);
     setio(VI_PLAN_BATTERY_CHARGE, batteryCharge);
     setio(VI_PLAN_BATTERY_KW, batteryKw);
+    setio(VI_PLAN_RESERVE_SOC, atof(reserveSocText));
     if (lastError[0] != 0)
         sprintf(status, "%s", lastError);
     else if (!hasPlan)
@@ -259,6 +288,7 @@ fetchFailed = 0;
 sinceFetch = FRESH_SECONDS + 1;
 sinceAttempt = FETCH_SECONDS;
 lastError[0] = 0;
+pollErrorCode[0] = 0;
 tankFlag[0] = 0;
 carFlag[0] = 0;
 batteryFlag[0] = 0;
@@ -273,14 +303,17 @@ while (TRUE) {
         serverAddress = getinputtext(INPUT_SERVER);
         if (apiKey == NULL || serverAddress == NULL || apiKey[0] == 0 || serverAddress[0] == 0) {
             sprintf(lastError, "error: missing api key or server");
+            sprintf(pollErrorCode, "missing_config");
             setoutputtext(DEBUG_URL, "");
             setoutputtext(DEBUG_RESPONSE, "");
             fetchFailed = 1;
         } else if (pullPlan(serverAddress, apiKey)) {
             sinceFetch = 0;
             fetchFailed = 0;
-        } else
+        } else {
             fetchFailed = 1;
+            reportPollError(serverAddress, apiKey);
+        }
         sinceAttempt = 0;
     }
     publishPlan();

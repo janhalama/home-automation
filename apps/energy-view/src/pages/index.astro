@@ -1,5 +1,32 @@
 ---
 import "../styles/material.css";
+
+const liveStats = ["FVE today", "FVE tomorrow", "Heater now", "Tank", "Price now"];
+const dayStats = [
+  "Bought cheaply",
+  "Sold expensively",
+  "Battery stayed safe",
+  "Morning export was wise",
+  "Import price",
+  "Day median",
+  "Minutes under 20%",
+  "Lowest charge",
+  "Tank on the cheap half"
+];
+const dayCharts = [
+  "Price",
+  "Sun",
+  "Sun covers the house",
+  "Grid",
+  "Tank temperature",
+  "Heating plan",
+  "Heater relay",
+  "Obluda plan",
+  "Obluda charging",
+  "Battery plan",
+  "Battery power",
+  "House battery"
+];
 ---
 
 <html lang="en">
@@ -35,27 +62,44 @@ import "../styles/material.css";
           <button id="next-day" type="button" class="quiet">Next</button>
           <button type="submit">Load</button>
         </form>
-        <p id="status" class="status"></p>
+        <p id="status" class="status" role="status"></p>
       </section>
 
       <section class="card">
         <h2>House now</h2>
         <p class="note">These are measurements. The day below is one clock: what drove the plan, then each plan beside what happened.</p>
-        <div id="live" class="stats"></div>
+        <div id="live" class="stats">
+          {liveStats.map((label) => <div class="stat"><span>{label}</span><strong class="pending">—</strong></div>)}
+        </div>
       </section>
 
       <section class="card">
         <h2>This day</h2>
         <p class="note">Bought cheaply, sold expensively, the battery floor, and whether morning export was wise. The forecast line stays empty until a forecast and the production that followed it are both stored.</p>
-        <div id="scores" class="stats"></div>
+        <div id="scores" class="stats">
+          {dayStats.map((label) => <div class="stat"><span>{label}</span><strong class="pending">—</strong></div>)}
+        </div>
         <p id="forecast-deviation" class="note"></p>
+      </section>
+
+      <section class="card">
+        <h2>House reserve</h2>
+        <p class="note">The line that used to sit at 50%. The night always stays above the 20% outage floor. That morning's sun is taken off the daylight only. A day with too few quiet nights uses the seasonal tables.</p>
+        <div class="chart-wrap" role="img" aria-label="House reserve chart"><canvas id="reserve-history"></canvas></div>
       </section>
 
       <section class="card">
         <h2>Plan and what happened</h2>
         <p id="day-label" class="note"></p>
         <p id="plan-line" class="note"></p>
-        <div id="day-rows"></div>
+        <div id="day-rows">
+          {dayCharts.map((title) => (
+            <section class="day-row">
+              <h3>{title}</h3>
+              <div class="day-row-chart" role="img" aria-label={`${title} chart`}></div>
+            </section>
+          ))}
+        </div>
       </section>
     </main>
     <script>

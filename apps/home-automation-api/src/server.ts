@@ -20,6 +20,7 @@ import {
   readLoxoneControl
 } from "./services/loxone-reading.js";
 import type { OtePost } from "./services/ote-day-ahead.js";
+import { readTeslaMateChargerPower } from "./services/teslamate-car.js";
 
 const COLLECT_EVERY_MS = 15 * 60 * 1000;
 
@@ -66,6 +67,9 @@ async function startServer(): Promise<void> {
               ]);
               return powerSampleFromReadings(pragueTimestamp(new Date()), pv, grid, battery, soc);
             }
+          : null,
+        readCarCharge: environment.teslamateMqttHost
+          ? () => readTeslaMateChargerPower(environment.teslamateMqttHost)
           : null,
         readHeating: loxoneConfigured
           ? async () => {
