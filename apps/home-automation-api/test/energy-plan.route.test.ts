@@ -139,4 +139,57 @@ describe("energy plan", () => {
     expect(logged.body).toBe("ok\n");
     await app.close();
   });
+
+  it("opens a car slot from this quarter when charging is switched on", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "energy-plan-car-"));
+    const archivePath = join(dir, "house.sqlite");
+    const archive = openHouseArchive(archivePath);
+    const date = new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Prague" }).format(new Date());
+    const parts = new Intl.DateTimeFormat("en-GB", {
+      timeZone: "Europe/Prague",
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23"
+    }).formatToParts(new Date());
+    const hour = Number(parts.find((part) => part.type === "hour")?.value ?? "0");
+    const minute = Math.floor(Number(parts.find((part) => part.type === "minute")?.value ?? "0") / 15) * 15;
+    const from = `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+    const endTotal = hour * 60 + minute + 15;
+    const end = endTotal >= 24 * 60
+      ? "24:00"
+      : `${String(Math.floor(endTotal / 60)).padStart(2, "0")}:${String(endTotal % 60).padStart(2, "0")}`;
+    archive.saveSpotPrices([{
+      date,
+      periodIndex: 1,
+      periodInterval: `${from}-${end}`,
+      eurPerMwh: 300
+    }]);
+    archive.savePowerSample({ at: `${date}T${from}:00`, pvKw: 0, meterKw: 0.4, batteryKw: 0, socPercent: 40 });
+    archive.close();
+    const morning = ["06", "07", "08", "09", "10", "11"].map((item) => `${date}T${item}:00`);
+    const app = createApp({
+      apiKey: "secret-key",
+      cacheTtlSeconds: 3600,
+      timeoutMs: 8000,
+      forecastSolarApiKey: "",
+      houseArchivePath: archivePath,
+      wattsonicDaysDir: dir,
+      readCar: async () => ({ usablePercent: 13, limitPercent: 80, pluggedIn: true, atHome: true }),
+      fetchImpl: async () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({ hourly: { time: morning, cloud_cover_low: [100, 100, 100, 100, 100, 100] } })
+      })
+    });
+    const headers = { "x-api-key": "secret-key" };
+    const off = await app.inject({ method: "GET", url: "/api/energy/car-charge", headers });
+    const switched = await app.inject({ method: "POST", url: "/api/energy/car-charge?on=1", headers });
+    const plan = await app.inject({ method: "GET", url: `/api/energy/plan?date=${date}`, headers });
+    expect(off.body).toBe("on=0\n");
+    expect(switched.body).toBe("on=1\n");
+    expect(plan.statusCode).toBe(200);
+    expect(plan.body).toContain("car=1\n");
+    expect(plan.body).toContain(`carFrom=${from}\n`);
+    await app.close();
+  });
 });

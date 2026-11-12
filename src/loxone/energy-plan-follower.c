@@ -246,8 +246,20 @@ void publishPlan() {
         carKw = atof(carKwText);
     }
     if (fresh && batteryFlag[0] == 'g' && insideSlot(now, batteryFrom, batteryTo)) {
+        float room;
         batteryCharge = 1;
         batteryKw = atof(batteryKwText);
+        // 1 kW stays free for the house. The car is the short load, so the battery
+        // only slows down while that slot, and the tank slot, are actually on.
+        room = 16.0;
+        if (tankCommand == 1)
+            room = room - 2.5;
+        if (carCommand == 1)
+            room = room - carKw;
+        if (room < 0)
+            room = 0;
+        if (batteryKw > room)
+            batteryKw = room;
     } else if (fresh && batterySellFlag[0] == '1' && insideSlot(now, batterySellFrom, batterySellTo)) {
         batteryCharge = -1;
         batteryKw = atof(batterySellKwText);

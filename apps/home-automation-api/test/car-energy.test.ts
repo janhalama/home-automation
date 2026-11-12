@@ -24,12 +24,12 @@ describe("missing car energy", () => {
       limitPercent: 80,
       pluggedIn: false,
       atHome: true
-    })).toEqual({ missingKwh: 45, pluggedIn: false, atHome: true });
+    })).toEqual({ missingKwh: 45, usablePercent: 20, pluggedIn: false, atHome: true });
     expect(carJobFromReading({
       usablePercent: 80,
       limitPercent: 80,
       pluggedIn: true,
       atHome: false
-    })).toEqual({ missingKwh: 0, pluggedIn: true, atHome: false });
+    })).toEqual({ missingKwh: 0, usablePercent: 80, pluggedIn: true, atHome: false });
   });
 });

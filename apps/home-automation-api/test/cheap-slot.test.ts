@@ -3,7 +3,7 @@ Tests for the shortest cheap run of quarter-hour prices.
 */
 
 import { describe, expect, it } from "vitest";
-import { cheapestSlot, cheapestSlotAcrossMidnight, type PriceQuarter } from "../src/services/cheap-slot.js";
+import { cheapestSlot, cheapestSlotAcrossMidnight, cheapestSlotUntil, type PriceQuarter } from "../src/services/cheap-slot.js";
 
 /* One delivery day's quarters from `from` until `to`, each at the same price. */
 function quarters(from: string, to: string, eurPerMwh: number): PriceQuarter[] {
@@ -102,6 +102,21 @@ describe("cheapest slot", () => {
       "23:00"
     );
     expect(slot).toBeNull();
+  });
+
+  it("stops at the caller's clock on the far side of midnight", () => {
+    const slot = cheapestSlotUntil(
+      [{ periodInterval: "23:00-23:15", eurPerMwh: 200 }],
+      [
+        { periodInterval: "05:45-06:00", eurPerMwh: 100 },
+        { periodInterval: "06:30-06:45", eurPerMwh: 50 }
+      ],
+      0.625,
+      2.5,
+      "22:45",
+      "06:30"
+    );
+    expect(slot).toEqual({ from: "05:45", to: "06:00" });
   });
 
   it("does not choose a quarter that has already ended", () => {

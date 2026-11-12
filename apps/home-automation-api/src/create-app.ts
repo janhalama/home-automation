@@ -3,6 +3,7 @@ This module builds the Fastify application instance for local and serverless use
 It wires configuration, validation, routes, and shared dependencies.
 */
 
+import { dirname, join } from "node:path";
 import Fastify from "fastify";
 import { TypeBoxTypeProvider } from "@fastify/type-provider-typebox";
 import { readEnvironmentConfig, type EnvironmentConfig } from "./config/environment.js";
@@ -64,6 +65,8 @@ function createEnvironmentDeps(): AppDeps {
 /* Create and configure the Fastify application instance. */
 export function createApp(deps: CreateAppDeps = createEnvironmentDeps()) {
   const app = Fastify({
+    disableRequestLogging: true,
+    logger: true,
     ajv: {
       customOptions: {
         coerceTypes: true
@@ -93,7 +96,7 @@ export function createApp(deps: CreateAppDeps = createEnvironmentDeps()) {
       return;
     reply.header("Access-Control-Allow-Origin", "*");
     reply.header("Access-Control-Allow-Headers", "Content-Type, X-API-Key");
-    reply.header("Access-Control-Allow-Methods", "GET, OPTIONS");
+    reply.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
     if (request.method === "OPTIONS")
       return reply.status(204).send();
   });
@@ -163,6 +166,7 @@ export function createApp(deps: CreateAppDeps = createEnvironmentDeps()) {
     readCar,
     readCarDay: readCarDayForPlan,
     readChargeKw,
+    carChargeNowPath: houseArchivePath ? join(dirname(houseArchivePath), "car-charge-now.json") : "",
     fetchImpl: deps.fetchImpl,
     predictionStore,
     forecastSolarApiKey: deps.forecastSolarApiKey,

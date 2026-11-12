@@ -317,6 +317,39 @@ function setPageLoading(isLoading: boolean): void {
   main.setAttribute("aria-busy", isLoading ? "true" : "false");
 }
 
+/* Show whether the manual car charge is on. */
+async function refreshCarChargeButton(apiBase: string, apiKey: string): Promise<void> {
+  const button = document.querySelector("#car-charge");
+  const note = document.querySelector("#car-charge-note");
+  if (!(button instanceof HTMLButtonElement))
+    return;
+  const response = await fetch(`${apiBase}/api/energy/car-charge`, {
+    headers: { "X-API-Key": apiKey }
+  });
+  const on = response.ok && (await response.text()).includes("on=1");
+  button.dataset.on = on ? "1" : "0";
+  button.textContent = on ? "Stop charging Obluda" : "Charge Obluda now";
+  if (note)
+    note.textContent = on ? "Charging is requested. The wallbox follows within 15 minutes." : "";
+}
+
+/* Flip the manual car charge and say when the wallbox will follow. */
+async function toggleCarCharge(): Promise<void> {
+  const apiBase = (document.querySelector("#api-base") as HTMLInputElement).value.replace(/\/$/, "");
+  const apiKey = (document.querySelector("#api-key") as HTMLInputElement).value;
+  const button = document.querySelector("#car-charge");
+  if (!(button instanceof HTMLButtonElement))
+    return;
+  const next = button.dataset.on === "1" ? "0" : "1";
+  const response = await fetch(`${apiBase}/api/energy/car-charge?on=${next}`, {
+    method: "POST",
+    headers: { "X-API-Key": apiKey }
+  });
+  if (!response.ok)
+    throw new Error("The charge switch was refused");
+  await refreshCarChargeButton(apiBase, apiKey);
+}
+
 /* Load the live state and the selected day. */
 async function loadDay(event?: Event): Promise<void> {
   event?.preventDefault();
@@ -350,6 +383,7 @@ async function loadDay(event?: Event): Promise<void> {
     if (reserveCanvas instanceof HTMLCanvasElement)
       renderReserveHistory(reserveCanvas, reserve.days);
     renderLive(live);
+    await refreshCarChargeButton(apiBase, apiKey);
     renderScores(series);
     const hasReality = series.points.some((point) => point.pvKw !== null || point.meterKw !== null);
     renderDayLabel(day, hasReality);
@@ -391,6 +425,13 @@ const day = document.querySelector("#day") as HTMLInputElement;
 apiBase.value = settings.apiBase;
 apiKey.value = settings.apiKey;
 day.value = pragueToday();
+document.querySelector("#car-charge")?.addEventListener("click", () => void toggleCarCharge().catch((error: unknown) => {
+  const status = document.querySelector("#status");
+  if (!status)
+    return;
+  status.className = "status error";
+  status.textContent = error instanceof Error ? error.message : "The charge switch failed";
+}));
 document.querySelector("#connection")?.addEventListener("submit", (event) => void loadDay(event));
 day.addEventListener("change", () => void loadDay());
 document.querySelector("#prev-day")?.addEventListener("click", () => {

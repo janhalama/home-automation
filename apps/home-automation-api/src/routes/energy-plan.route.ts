@@ -6,7 +6,9 @@ import { Type } from "@fastify/type-provider-typebox";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { formatErrorResponse } from "../lib/plain-text-response.js";
 import { carJobFromReading, type CarReading } from "../services/car-energy.js";
-import { buildEnergyPlan, formatEnergyPlan } from "../services/energy-plan.js";
+import { MORNING_CAR_PERCENT, morningCarKwh } from "../services/car-energy.js";
+import { readCarChargeNow, writeCarChargeNow } from "../services/car-charge-now.js";
+import { buildEnergyPlan, chargeCarNow, formatEnergyPlan, type EnergyPlan } from "../services/energy-plan.js";
 import { heaterIsOn, HOUSE_LOAD_DAYS, houseKwByHour, houseLoadDates, houseLoadForPlan } from "../services/recent-house-load.js";
 import type { PredictionStore } from "../services/prediction-store.js";
 import { alignSunCover } from "../services/sun-cover.js";
@@ -34,7 +36,18 @@ export type EnergyPlanDeps = {
   predictionStore: PredictionStore | null;
   forecastSolarApiKey: string;
   timeoutMs: number;
+  carChargeNowPath: string;
 };
+
+/* Replace the planned car slot with a charge that starts this quarter. */
+function applyCarChargeNow(plan: EnergyPlan, startAt: string | null, missingKwh: number): EnergyPlan {
+  if (!startAt)
+    return plan;
+  const slot = chargeCarNow(startAt, missingKwh);
+  if (!slot)
+    return plan;
+  return { ...plan, car: "on", carKw: 11, carFrom: slot.from, carTo: slot.to };
+}
 
 /* Refuse a call that has no server key or the wrong client key. */
 function rejectUnauthorized(apiKey: string, request: FastifyRequest, reply: FastifyReply, queryApiKey?: string): boolean {
@@ -105,6 +118,47 @@ function registerPlanPollLog(app: FastifyInstance): void {
 /* Register the plan Loxone pulls once a day. */
 export function registerEnergyPlanRoute(app: FastifyInstance, deps: EnergyPlanDeps): void {
   registerPlanPollLog(app);
+  app.route({
+    method: "GET",
+    url: "/api/energy/car-charge",
+    schema: {
+      querystring: Type.Object({
+        apiKey: Type.Optional(Type.String())
+      }, { additionalProperties: false })
+    },
+    handler: async (request, reply) => {
+      const query = request.query as { apiKey?: string };
+      if (rejectUnauthorized(deps.apiKey, request, reply, query.apiKey))
+        return;
+      if (!deps.carChargeNowPath) {
+        reply.status(503).type("text/plain; charset=utf-8").send(formatErrorResponse("server_misconfigured"));
+        return;
+      }
+      const on = readCarChargeNow(deps.carChargeNowPath);
+      reply.status(200).type("text/plain; charset=utf-8").send(on ? "on=1\n" : "on=0\n");
+    }
+  });
+  app.route({
+    method: "POST",
+    url: "/api/energy/car-charge",
+    schema: {
+      querystring: Type.Object({
+        on: Type.Union([Type.Literal("0"), Type.Literal("1")]),
+        apiKey: Type.Optional(Type.String())
+      }, { additionalProperties: false })
+    },
+    handler: async (request, reply) => {
+      const query = request.query as { on: "0" | "1"; apiKey?: string };
+      if (rejectUnauthorized(deps.apiKey, request, reply, query.apiKey))
+        return;
+      if (!deps.carChargeNowPath) {
+        reply.status(503).type("text/plain; charset=utf-8").send(formatErrorResponse("server_misconfigured"));
+        return;
+      }
+      writeCarChargeNow(deps.carChargeNowPath, query.on === "1");
+      reply.status(200).type("text/plain; charset=utf-8").send(query.on === "1" ? "on=1\n" : "on=0\n");
+    }
+  });
   app.route({
     method: "GET",
     url: "/api/energy/plan-log",
@@ -201,7 +255,7 @@ export function registerEnergyPlanRoute(app: FastifyInstance, deps: EnergyPlanDe
         tankOn: (at) => heaterIsOn(heatingPeriods, at),
         carChargeKw
       });
-      const plan = buildEnergyPlan({
+      const built = buildEnergyPlan({
         prices,
         tomorrowPrices: lookAhead ? archive.listSpotPrices(pragueDate(new Date(), 1)) : [],
         startAt,
@@ -220,6 +274,15 @@ export function registerEnergyPlanRoute(app: FastifyInstance, deps: EnergyPlanDe
         tomorrowPvKwh: lookAhead ? tomorrowPvKwh : null,
         car
       });
+      const chargeNow = lookAhead
+        && deps.carChargeNowPath !== ""
+        && car !== null
+        && car.atHome
+        && readCarChargeNow(deps.carChargeNowPath);
+      const chargeKwh = car && car.usablePercent !== undefined && car.usablePercent < MORNING_CAR_PERCENT
+        ? morningCarKwh(car.usablePercent, car.missingKwh).floorKwh
+        : car?.missingKwh ?? 0;
+      const plan = chargeNow && car ? applyCarChargeNow(built, startAt, chargeKwh) : built;
       let sunCover: { from: string; to: string } | null = null;
       if (deps.predictionStore) {
         try {

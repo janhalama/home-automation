@@ -12,7 +12,27 @@ export type BatteryPlanWindow = {
   batterySellFrom: string | null;
   batterySellTo: string | null;
   batterySellKw: number;
+  tankFrom?: string | null;
+  tankTo?: string | null;
+  carFrom?: string | null;
+  carTo?: string | null;
+  carKw?: number;
 };
+
+const BREAKER_KW = 17;
+const HOUSE_KW = 1;
+const TANK_KW = 2.5;
+
+/* Charge power for this quarter. The plan's kW is the ceiling. The car, and the tank with it, only cut the minutes they are actually on. */
+function chargeKw(plan: BatteryPlanWindow, time: string): number {
+  const tankOn = inSlot(time, plan.tankFrom ?? null, plan.tankTo ?? null);
+  const carOn = inSlot(time, plan.carFrom ?? null, plan.carTo ?? null);
+  const taken = HOUSE_KW + (tankOn ? TANK_KW : 0) + (carOn ? plan.carKw ?? 0 : 0);
+  const room = BREAKER_KW - taken;
+  if (room <= 0)
+    return 0;
+  return Math.min(plan.batteryKw, room);
+}
 
 type NamedSlot = {
   label: string;
@@ -82,7 +102,7 @@ function plannedKw(plan: BatteryPlanWindow | null, time: string): number | null 
   if (!plan)
     return null;
   if (inSlot(time, plan.batteryFrom, plan.batteryTo))
-    return -plan.batteryKw;
+    return -chargeKw(plan, time);
   if (inSlot(time, plan.batterySellFrom, plan.batterySellTo))
     return plan.batterySellKw;
   if (!plan.batteryFrom && !plan.batterySellFrom)

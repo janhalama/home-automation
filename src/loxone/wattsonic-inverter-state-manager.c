@@ -60,8 +60,8 @@ https://smarthome.exposed/wattsonic-hybrid-inverter-gen3-modbus-rtu-protocol
 
 // Constants for inverter state
 #define BATTERY_POWER_LIMIT_DISCHARGE_MAX 80
-// 30% power limit is recommended by the technician
-#define BATTERY_POWER_LIMIT_CHARGE_MAX 30
+// 6 kW is half of the 12 kW the battery can accept. On the 10 kW inverter that is 60%.
+#define BATTERY_POWER_LIMIT_CHARGE_MAX 60
 #define BATTERY_POWER_LIMIT_OFF 0
 #define GRID_INJECTION_POWER_LIMIT_MAX 80
 #define GRID_INJECTION_POWER_LIMIT_OFF 0
@@ -157,7 +157,7 @@ void updateInverterState() {
         batteryMode = BATTERY_CHARGE_MODE; // Charge from grid
         batteryChargeDischargePowerLimit = chargeLimit;
         gridInjectionPowerLimit = GRID_INJECTION_POWER_LIMIT_OFF; // Do not inject power to grid
-        // 100% blocks the discharge floor for this charge. The 30% period limit is what limits the power.
+        // 100% blocks the discharge floor for this charge. The 60% period limit is what limits the power.
         onGridEndSOCProtection = 100.0;
         periodEnabled = 1;
         periodStart = PERIOD_START_MIDNIGHT;

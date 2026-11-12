@@ -2,6 +2,7 @@
 The shortest run of quarter-hour prices that can finish a job.
 A longer run is used only when no shorter run can hold the energy.
 A run may cross midnight when today is joined to the next morning.
+The battery chooses how far into that morning the run may reach. The tank and the car stop at 06:00.
 */
 
 export type PriceQuarter = {
@@ -90,6 +91,23 @@ export function cheapestSlot(
   return cheapestRun(ordered, kwh, powerKw);
 }
 
+/* Today's remaining quarters joined to tomorrow, stopping at endAt on the tomorrow side. 24:00 meets 00:00. */
+export function cheapestSlotUntil(
+  before: PriceQuarter[],
+  after: PriceQuarter[],
+  kwh: number,
+  powerKw: number,
+  startAt: string,
+  endAt: string
+): Slot | null {
+  const startMin = minutes(startAt);
+  const deadline = MINUTES_PER_DAY + minutes(endAt);
+  const today = place(before, 0).filter((quarter) => quarter.toMin > startMin);
+  const tomorrow = place(after, 1).filter((quarter) => quarter.toMin <= deadline);
+  const ordered = [...today, ...tomorrow].sort((left, right) => left.fromMin - right.fromMin);
+  return cheapestRun(ordered, kwh, powerKw);
+}
+
 /* Today's remaining quarters joined to tomorrow through 06:00. 24:00 meets 00:00. */
 export function cheapestSlotAcrossMidnight(
   before: PriceQuarter[],
@@ -98,10 +116,5 @@ export function cheapestSlotAcrossMidnight(
   powerKw: number,
   startAt: string
 ): Slot | null {
-  const startMin = minutes(startAt);
-  const deadline = MINUTES_PER_DAY + minutes(MORNING_END);
-  const today = place(before, 0).filter((quarter) => quarter.toMin > startMin);
-  const tomorrow = place(after, 1).filter((quarter) => quarter.toMin <= deadline);
-  const ordered = [...today, ...tomorrow].sort((left, right) => left.fromMin - right.fromMin);
-  return cheapestRun(ordered, kwh, powerKw);
+  return cheapestSlotUntil(before, after, kwh, powerKw, startAt, MORNING_END);
 }
