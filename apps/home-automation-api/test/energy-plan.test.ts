@@ -488,6 +488,32 @@ describe("energy plan", () => {
     expect(plan.batterySellKw).toBe(8);
   });
 
+  it("sells only the energy above the reserve, not the whole expensive band", () => {
+    const clock = (minutes: number) =>
+      `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
+    const band = Array.from({ length: 16 }, (_, index) => {
+      const start = 16 * 60 + index * 15;
+      const price = start === 18 * 60 ? 310 : 300;
+      return [`${clock(start)}-${clock(start + 15)}`, price] as [string, number];
+    });
+    const plan = buildEnergyPlan({
+      prices: prices([["02:00-02:15", 40], ...band]),
+      date: "2026-11-13",
+      nightHouseKwh: 0,
+      daylightHouseKwh: 0,
+      bottomTemperatureC: 55,
+      aboveFloorKwh: 15.2,
+      socPercent: 100,
+      season: "autumn",
+      lowCloudPercent: 0,
+      pvRemainingKwh: 20,
+      car: { missingKwh: 0, pluggedIn: true, atHome: true }
+    });
+    expect(plan.batterySellKw).toBe(8);
+    expect(plan.batterySellFrom).toBe("17:00");
+    expect(plan.batterySellTo).toBe("19:00");
+  });
+
   it("sells the upper half when the car does not need it", () => {
     const plan = buildEnergyPlan({
       prices: night,

@@ -393,6 +393,41 @@ function peakSellSlot(quarters: PriceQuarter[]): Slot | null {
   return { from, to };
 }
 
+/* The dearest stretch of the peak that the energy above the reserve can actually cover at 8 kW. */
+function saleSpan(quarters: PriceQuarter[], peak: Slot, kwh: number): Slot | null {
+  if (kwh <= 0)
+    return null;
+  const inside = quarters.filter((quarter) => clockInside(quarter.periodInterval.split("-")[0], peak.from, peak.to));
+  if (inside.length === 0)
+    return null;
+  const count = Math.min(inside.length, Math.ceil(kwh / SELL_KW / 0.25));
+  let peakAt = 0;
+  inside.forEach((quarter, index) => {
+    if (quarter.eurPerMwh > inside[peakAt].eurPerMwh)
+      peakAt = index;
+  });
+  let start = peakAt;
+  let end = peakAt;
+  let preferLeft = true;
+  while (end - start + 1 < count) {
+    const left = start > 0 ? inside[start - 1].eurPerMwh : -1;
+    const right = end < inside.length - 1 ? inside[end + 1].eurPerMwh : -1;
+    const takeLeft = left >= 0 && (right < 0 || left > right || (left === right && preferLeft));
+    if (takeLeft) {
+      start -= 1;
+      preferLeft = false;
+    } else if (right >= 0) {
+      end += 1;
+      preferLeft = true;
+    } else
+      break;
+  }
+  return {
+    from: inside[start].periodInterval.split("-")[0],
+    to: inside[end].periodInterval.split("-")[1]
+  };
+}
+
 /* Clock HH:MM to minutes after midnight. */
 function clockMinutes(clock: string): number {
   const [hour, minute] = clock.split(":");
@@ -726,8 +761,14 @@ export function buildEnergyPlan(input: {
     : !socKnown
       ? input.aboveFloorKwh !== null && input.aboveFloorKwh > 0
       : (sellableKwh ?? 0) > 0 && !carFromBattery;
+  const heldKwh = storedKwh === null ? null : Math.max(0, Math.min(PACK_KWH, storedKwh + gainKwh) - reserveKwh);
   const sellCandidate = sellEnergy ? peakForSale : null;
-  const sellSlot = slotsOverlap(sellCandidate, batterySlot) ? null : sellCandidate;
+  const fittedSale = sellCandidate === null
+    ? null
+    : heldKwh === null || heldKwh <= 0
+      ? sellCandidate
+      : saleSpan(quarters, sellCandidate, heldKwh);
+  const sellSlot = slotsOverlap(fittedSale, batterySlot) ? null : fittedSale;
   const dischargeKw = houseDischargeKw(input.aboveFloorKwh, input.season);
 
   return {

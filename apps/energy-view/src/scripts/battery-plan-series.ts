@@ -12,6 +12,9 @@ export type BatteryPlanWindow = {
   batterySellFrom: string | null;
   batterySellTo: string | null;
   batterySellKw: number;
+  batteryDischargeFrom?: string | null;
+  batteryDischargeTo?: string | null;
+  batteryDischargeKw?: number;
   tankFrom?: string | null;
   tankTo?: string | null;
   carFrom?: string | null;
@@ -122,6 +125,57 @@ function planForQuarter(
   if (minutes(time) < recordedUntilMinute)
     return opening ?? live;
   return live;
+}
+
+export type BatteryPlanParts = {
+  buy: number | null;
+  house: number | null;
+  sale: number | null;
+};
+
+export type BatteryMeasuredParts = {
+  buy: number | null;
+  sun: number | null;
+  house: number | null;
+  sale: number | null;
+};
+
+/* Charge below zero splits into a grid buy and the sun. Discharge above zero is a sale or the house. */
+export function batteryMeasuredParts(batteryKw: number | null, meterKw: number | null, plannedSale: boolean): BatteryMeasuredParts {
+  if (batteryKw === null)
+    return { buy: null, sun: null, house: null, sale: null };
+  if (batteryKw < 0) {
+    const charge = -batteryKw;
+    const fromGrid = meterKw === null ? charge : Math.min(charge, Math.max(0, -meterKw));
+    const fromSun = charge - fromGrid;
+    return { buy: fromGrid === 0 ? 0 : -fromGrid, sun: fromSun === 0 ? 0 : -fromSun, house: 0, sale: 0 };
+  }
+  if (batteryKw > 0 && plannedSale)
+    return { buy: 0, sun: 0, house: 0, sale: batteryKw };
+  return { buy: 0, sun: 0, house: batteryKw, sale: 0 };
+}
+
+/* Buy, house use, and sale for one quarter. The house line stops where a sale starts. */
+export function batteryPlanParts(
+  time: string,
+  live: BatteryPlanWindow | null,
+  opening: BatteryPlanWindow | null,
+  recordedUntilMinute: number | null
+): BatteryPlanParts {
+  const plan = planForQuarter(time, live, opening, recordedUntilMinute);
+  const empty = { buy: null, house: null, sale: null };
+  if (!plan)
+    return empty;
+  const kw = plannedKw(plan, time);
+  const selling = inSlot(time, plan.batterySellFrom, plan.batterySellTo);
+  const using = inSlot(time, plan.batteryDischargeFrom ?? null, plan.batteryDischargeTo ?? null);
+  if (kw === null && !using)
+    return empty;
+  return {
+    buy: kw !== null && kw < 0 ? kw : 0,
+    house: using && !selling ? plan.batteryDischargeKw ?? 0 : 0,
+    sale: kw !== null && kw > 0 ? kw : 0
+  };
 }
 
 /* kW the battery plan row draws for this quarter. */

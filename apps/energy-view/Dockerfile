@@ -15,6 +15,11 @@ RUN pnpm install --frozen-lockfile --filter energy-view...
 
 COPY apps/energy-view apps/energy-view
 
+ARG PUBLIC_ENERGY_API_BASE=https://energy-api.janhalama.cz
+ARG PUBLIC_ENERGY_PUBLIC_HOST=energy.janhalama.cz
+ENV PUBLIC_ENERGY_API_BASE=$PUBLIC_ENERGY_API_BASE
+ENV PUBLIC_ENERGY_PUBLIC_HOST=$PUBLIC_ENERGY_PUBLIC_HOST
+
 RUN pnpm --filter energy-view build
 
 FROM nginx:1.27-alpine

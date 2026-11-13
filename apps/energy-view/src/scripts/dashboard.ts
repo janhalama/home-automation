@@ -2,6 +2,7 @@
 Loads one day and the live forecast from the energy API and draws them.
 */
 
+import { renderBalanceHistory, type BalancePoint } from "./balance-chart.ts";
 import { batteryChargeSentence } from "./battery-plan-series.ts";
 import { renderDayRows } from "./day-rows.ts";
 import { renderReserveHistory, type ReservePoint } from "./reserve-chart.ts";
@@ -78,12 +79,23 @@ type DayPlan = {
 const STORAGE_KEY = "energy-view-connection";
 const charts: Chart[] = [];
 
-/* Read the saved API address and key. */
+/* A public build setting. The page refuses to start without it. */
+function publicEnv(name: string): string {
+  const value = (import.meta.env as Record<string, string | undefined>)[name];
+  if (!value)
+    throw new Error(`Missing ${name}`);
+  return value;
+}
+
+/* Read the saved API address and key. On the public name, the API is the same site. */
 function readSettings(): { apiBase: string; apiKey: string } {
   const raw = localStorage.getItem(STORAGE_KEY);
-  if (!raw)
-    return { apiBase: "http://192.168.1.3:3001", apiKey: "" };
-  return JSON.parse(raw) as { apiBase: string; apiKey: string };
+  const saved = raw
+    ? JSON.parse(raw) as { apiBase: string; apiKey: string }
+    : { apiBase: publicEnv("PUBLIC_ENERGY_API_BASE"), apiKey: "" };
+  if (location.hostname === publicEnv("PUBLIC_ENERGY_PUBLIC_HOST"))
+    return { apiBase: location.origin, apiKey: saved.apiKey };
+  return saved;
 }
 
 /* Keep the address and key in this browser. */
@@ -231,6 +243,32 @@ function answer(value: boolean | null): string {
   return value ? "yes" : "no";
 }
 
+/* Kč with a leading minus when the day cost money. */
+function crowns(value: number): string {
+  const text = `${Math.abs(value).toFixed(2)} Kč`;
+  return value < 0 ? `−${text}` : text;
+}
+
+/* The selected day's rate, import, export, and balance. */
+function moneyStats(day: BalancePoint | null): string[] {
+  const rate = day?.czkPerEur == null ? "not yet" : `${day.czkPerEur.toFixed(3)} Kč`;
+  if (day?.importCzk == null || day.exportCzk == null || day.balanceCzk == null)
+    return [
+      stat("EUR rate", rate),
+      stat("Grid purchase", "not yet"),
+      stat("Export", "not yet"),
+      stat("Sun saved", "not yet"),
+      stat("Day balance", "not yet")
+    ];
+  return [
+    stat("EUR rate", rate),
+    stat("Grid purchase", crowns(day.importCzk)),
+    stat("Export", crowns(day.exportCzk)),
+    stat("Sun saved", crowns(day.sunCzk ?? 0)),
+    stat("Day balance", crowns(day.balanceCzk))
+  ];
+}
+
 /* Format one EUR/MWh figure. */
 function priceLine(value: number | null): string {
   if (value === null)
@@ -238,23 +276,25 @@ function priceLine(value: number | null): string {
   return `${value.toFixed(0)} EUR/MWh`;
 }
 
-/* Fill the four scores and the forecast deviation. */
-function renderScores(series: SeriesResponse): void {
+/* Fill the money, the four scores, and the forecast deviation. */
+function renderScores(series: SeriesResponse, balanceDay: BalancePoint | null): void {
   const root = document.querySelector("#scores");
   const deviation = document.querySelector("#forecast-deviation");
   if (!root || !deviation)
     return;
   const score = series.score;
+  const money = moneyStats(balanceDay);
   if (!score) {
-    root.innerHTML = stat(
-      "Day score",
-      series.missing.length > 0 ? "not yet" : "morning cloud was not read"
-    );
+    root.innerHTML = [
+      ...money,
+      stat("Day score", series.missing.length > 0 ? "not yet" : "morning cloud was not read")
+    ].join("");
   } else {
     const tank = score.tankPeriodsOnCheapHalf === null
       ? "not started"
       : String(score.tankPeriodsOnCheapHalf);
     root.innerHTML = [
+      ...money,
       stat("Bought cheaply", answer(score.boughtCheaply)),
       stat("Sold expensively", answer(score.soldExpensively)),
       stat("Battery stayed safe", score.minutesBelowFloor === 0 ? "yes" : "no"),
@@ -365,13 +405,14 @@ async function loadDay(event?: Event): Promise<void> {
   }
   try {
     const today = day === pragueToday();
-    const [live, series, livePlan, openingPlan, car, reserve, sunCover] = await Promise.all([
+    const [live, series, livePlan, openingPlan, car, reserve, balance, sunCover] = await Promise.all([
       loadJson<LiveResponse>(apiBase, apiKey, "/api/energy/live"),
       loadJson<SeriesResponse>(apiBase, apiKey, `/api/energy/series?date=${day}`),
       today ? loadPlan(apiBase, apiKey, day) : Promise.resolve(null),
       loadPlan(apiBase, apiKey, day, "open"),
       loadCarPoints(apiBase, apiKey, day),
       loadJson<{ days: ReservePoint[] }>(apiBase, apiKey, `/api/energy/reserve-history?date=${day}`),
+      loadJson<{ days: BalancePoint[] }>(apiBase, apiKey, `/api/energy/balance-history?date=${day}`),
       loadJson<{ from: string | null; to: string | null; points: { time: string; pvKw: number; houseKw: number }[] }>(
         apiBase,
         apiKey,
@@ -382,9 +423,12 @@ async function loadDay(event?: Event): Promise<void> {
     const reserveCanvas = document.querySelector("#reserve-history");
     if (reserveCanvas instanceof HTMLCanvasElement)
       renderReserveHistory(reserveCanvas, reserve.days);
+    const balanceCanvas = document.querySelector("#balance-history");
+    if (balanceCanvas instanceof HTMLCanvasElement)
+      renderBalanceHistory(balanceCanvas, balance.days);
     renderLive(live);
     await refreshCarChargeButton(apiBase, apiKey);
-    renderScores(series);
+    renderScores(series, balance.days.find((item) => item.date === day) ?? null);
     const hasReality = series.points.some((point) => point.pvKw !== null || point.meterKw !== null);
     renderDayLabel(day, hasReality);
     const recordedUntilMinute = today ? pragueMinutesNow() : null;

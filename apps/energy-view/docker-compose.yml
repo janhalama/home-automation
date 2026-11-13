@@ -6,6 +6,9 @@ services:
     build:
       context: ../..
       dockerfile: apps/energy-view/Dockerfile
+      args:
+        PUBLIC_ENERGY_API_BASE: ${PUBLIC_ENERGY_API_BASE:-https://energy-api.janhalama.cz}
+        PUBLIC_ENERGY_PUBLIC_HOST: ${PUBLIC_ENERGY_PUBLIC_HOST:-energy.janhalama.cz}
     image: ${APP_IMAGE:-home-automation:1.0.0}
     container_name: home-automation
     restart: unless-stopped

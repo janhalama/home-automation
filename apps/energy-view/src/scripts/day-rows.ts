@@ -4,7 +4,7 @@ Price and sun are what drive the plan. Then each job shows the plan and what hap
 */
 
 import { Chart, type ChartDataset } from "chart.js/auto";
-import { batteryPlanKw, batteryPlanTitle } from "./battery-plan-series.ts";
+import { batteryMeasuredParts, batteryPlanParts, batteryPlanTitle } from "./battery-plan-series.ts";
 
 export type RowPoint = {
   time: string;
@@ -30,6 +30,9 @@ export type RowPlan = {
   batterySellFrom: string | null;
   batterySellTo: string | null;
   batterySellKw: number;
+  batteryDischargeFrom: string | null;
+  batteryDischargeTo: string | null;
+  batteryDischargeKw: number;
   reserveSoc: number | null;
 };
 
@@ -52,12 +55,32 @@ type RowSeries = {
   spanGaps?: boolean;
   signed?: boolean;
   trade?: boolean;
+  fill?: boolean;
 };
 
 const BUY = "#386a20";
+const SUN = "#e6b400";
+const HOUSE = "#8a5a00";
 const SELL = "#b3261e";
+const BATTERY_COLORS = "Green is a buy, amber is the house, red is a sale";
+const BATTERY_MEASURED_COLORS = "Green is a buy, yellow is the sun, amber is the house, red is a sale";
 const BUY_FILL = "rgba(56, 106, 32, 0.35)";
+const SUN_FILL = "rgba(230, 180, 0, 0.45)";
+const HOUSE_FILL = "rgba(138, 90, 0, 0.35)";
 const SELL_FILL = "rgba(179, 38, 30, 0.35)";
+
+/* Translucent fill for a series that stays on one side of zero. */
+function fillColor(color: string): string {
+  if (color === BUY)
+    return BUY_FILL;
+  if (color === SUN)
+    return SUN_FILL;
+  if (color === HOUSE)
+    return HOUSE_FILL;
+  if (color === SELL)
+    return SELL_FILL;
+  return color;
+}
 
 /* Green on a buy, red on a sale. The grid row keeps red for import. */
 function tradeStroke(item: RowSeries, start: number, end: number): string {
@@ -186,7 +209,7 @@ function slotLine(labels: string[], from: string | null, to: string | null, valu
 }
 
 /* One titled row and its chart. */
-function addRow(host: HTMLElement, title: string, labels: string[], unit: string, series: RowSeries[], min?: number, max?: number): void {
+function addRow(host: HTMLElement, title: string, labels: string[], unit: string, series: RowSeries[], min?: number, max?: number, stacked = false): void {
   const section = document.createElement("section");
   section.className = "day-row";
   const heading = document.createElement("h3");
@@ -205,14 +228,17 @@ function addRow(host: HTMLElement, title: string, labels: string[], unit: string
         label: item.label,
         data: item.data,
         borderColor: item.color,
-        backgroundColor: item.color,
+        backgroundColor: item.fill ? fillColor(item.color) : item.color,
         borderDash: item.dashed ? [4, 4] : undefined,
         borderWidth: 2,
         pointRadius: 0,
         tension: 0,
         spanGaps: item.spanGaps ?? false,
         stepped: "after",
-        fill: item.signed || item.trade
+        stack: stacked ? "row" : undefined,
+        fill: item.fill
+          ? { target: "origin" }
+          : item.signed || item.trade
           ? {
               target: "origin",
               above: item.trade ? SELL_FILL : BUY_FILL,
@@ -234,7 +260,18 @@ function addRow(host: HTMLElement, title: string, labels: string[], unit: string
       responsive: true,
       maintainAspectRatio: false,
       animation: false,
-      plugins: { legend: { display: series.length > 1, position: "bottom" } },
+      plugins: {
+        legend: { display: series.length > 1, position: "bottom" },
+        tooltip: {
+          callbacks: {
+            label(context) {
+              const raw = context.raw;
+              const value = typeof raw === "number" ? raw : context.parsed.y;
+              return `${context.dataset.label}: ${value}`;
+            }
+          }
+        }
+      },
       scales: {
         x: {
           ticks: {
@@ -249,7 +286,7 @@ function addRow(host: HTMLElement, title: string, labels: string[], unit: string
             }
           }
         },
-        y: { min, max, title: { display: true, text: unit } }
+        y: { stacked, min, max, title: { display: true, text: unit } }
       }
     }
   }));
@@ -300,9 +337,17 @@ export function renderDayRows(host: HTMLElement, input: {
     return point.chargeKw ?? 0;
   })));
   const opening = input.openingPlan;
-  const batteryPlan = throughMidnight(quarters.map((time) =>
-    batteryPlanKw(time, plan, opening, recordedUntil)
-  ));
+  const batteryParts = quarters.map((time) => batteryPlanParts(time, plan, opening, recordedUntil));
+  const batteryPlan = {
+    buy: throughMidnight(batteryParts.map((part) => part.buy)),
+    house: throughMidnight(batteryParts.map((part) => part.house)),
+    sale: throughMidnight(batteryParts.map((part) => part.sale))
+  };
+  const batteryMeasured = quarters.map((time) => {
+    const point = energy.get(time);
+    const plannedSale = (batteryPlanParts(time, plan, opening, recordedUntil).sale ?? 0) > 0;
+    return batteryMeasuredParts(point?.batteryKw ?? null, point?.meterKw ?? null, plannedSale);
+  });
   const reserve = plan?.reserveSoc ?? null;
   const carTitle = plan?.car === "battery"
     ? `Obluda plan, ${plan.carKw.toFixed(0)} kW from the battery${reserve === null ? "" : ` down to ${reserve.toFixed(0)}%`}${plan.carFrom && plan.carTo ? ` ${plan.carFrom}–${plan.carTo}` : ""}`
@@ -371,12 +416,17 @@ export function renderDayRows(host: HTMLElement, input: {
   addRow(host, "Obluda charging", labels, "kW", [
     { label: "Charging", data: charging, color: "#006a6a" }
   ]);
-  addRow(host, `${batteryTitle}. Green is a buy, red is a sale`, labels, "kW", [
-    { label: "Plan", data: batteryPlan, color: "#7d5260", trade: true }
+  addRow(host, `${batteryTitle}. ${BATTERY_COLORS}`, labels, "kW", [
+    { label: "Buy", data: batteryPlan.buy, color: BUY, fill: true },
+    { label: "House", data: batteryPlan.house, color: HOUSE, fill: true },
+    { label: "Sale", data: batteryPlan.sale, color: SELL, fill: true }
   ]);
-  addRow(host, "Battery power. Green is charge, red is discharge", labels, "kW", [
-    { label: "Battery", data: throughMidnight(quarters.map((time) => energy.get(time)?.batteryKw ?? null)), color: "#7d5260", trade: true }
-  ]);
+  addRow(host, `Battery power. ${BATTERY_MEASURED_COLORS}`, labels, "kW", [
+    { label: "Buy", data: throughMidnight(batteryMeasured.map((part) => part.buy)), color: BUY, fill: true },
+    { label: "Sun", data: throughMidnight(batteryMeasured.map((part) => part.sun)), color: SUN, fill: true },
+    { label: "House", data: throughMidnight(batteryMeasured.map((part) => part.house)), color: HOUSE, fill: true },
+    { label: "Sale", data: throughMidnight(batteryMeasured.map((part) => part.sale)), color: SELL, fill: true }
+  ], undefined, undefined, true);
   addRow(host, "House battery", labels, "%", [
     { label: "State of charge", data: throughMidnight(quarters.map((time) => energy.get(time)?.socPercent ?? null)), color: "#1d192b", spanGaps: true },
     ...(reserve === null ? [] : [{ label: `${reserve.toFixed(0)}% reserve`, data: labels.map(() => reserve), color: "#8a5a00", dashed: true }]),

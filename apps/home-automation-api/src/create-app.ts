@@ -17,6 +17,7 @@ import { registerEnergyDataRoutes } from "./routes/energy-data.route.js";
 import { registerEnergyPlanRoute } from "./routes/energy-plan.route.js";
 import { registerCarDayRoute } from "./routes/car-day.route.js";
 import { registerReserveHistoryRoute } from "./routes/reserve-history.route.js";
+import { registerBalanceHistoryRoute } from "./routes/balance-history.route.js";
 import { registerSunCoverRoute } from "./routes/sun-cover.route.js";
 import type { CarReading } from "./services/car-energy.js";
 import type { CarPoint } from "./services/car-day.js";
@@ -188,6 +189,11 @@ export function createApp(deps: CreateAppDeps = createEnvironmentDeps()) {
     fetchImpl: deps.fetchImpl,
     readCarDay: readCarDayForPlan,
     readChargeKw
+  });
+  registerBalanceHistoryRoute(app, {
+    apiKey: deps.apiKey,
+    archive: houseArchive,
+    fetchImpl: deps.fetchImpl
   });
   registerCarDayRoute(app, {
     apiKey: deps.apiKey,
