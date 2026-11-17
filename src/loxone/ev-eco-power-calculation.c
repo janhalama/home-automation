@@ -8,10 +8,15 @@
  Input 4 - User configuration for SOC threshold to charge with ECO power
  Input 5 - Grid power in kW. Positive while the house exports. Do not insert this in front of the others.
  Input 6 - Battery power in kW. Positive while the battery discharges. Negative while it charges.
+ Input 7 - Povolit prioritní nabíjení EV. Add it at the end. Do not insert it in front.
+ Input 8 - Prioritní nabíjecí výkon, in kW. Add it at the end.
+
+ Output 1 is Peco on the Wallbox Manager. It is held at 12 kW so a 16 A charge fits under the cap.
+ The plan is not consulted while that hold is in place.
 
  Plan: fresh is VI9, Plan: car is VI18, Plan: car kW is VI19. No wire from the planner.
  Plan car 2 means leftover sun: the battery must be above 30 percent, and the car gets only power the house is not using.
- Plan car 3 means the house battery above the reserve: charge at the plan kW, which is 6, while the battery is above that line, then stop. The line is VI22, the state of charge the house keeps for a sunless night and day. It starts again only after the battery has climbed 2 percent above the line. Direct sun on top of the 6 kW may raise the charge up to 11 kW. The grid does not finish that charge. A grid slot stays at the plan kW, up to 11. A missing VI22 keeps the old 50 percent line.
+ Plan car 3 means the house battery above the reserve: charge at the plan kW, which is 6, while the battery is above that line, then stop. The line is VI22, the state of charge the house keeps for a sunless night and day. It starts again only after the battery has climbed 2 percent above the line. Direct sun on top of the 6 kW may raise the charge up to 12 kW. The grid does not finish that charge. A grid slot stays at the plan kW, up to 12. A missing VI22 keeps the old 50 percent line.
 
  Outputs:
  Output 1 - The result is ECO charging power to be assigned to Wallbox Manager
@@ -26,13 +31,16 @@
 #define BATTERY_COMMAND 3.0
 #define RESERVE_SOC_FALLBACK 50.0
 #define VI_PLAN_RESERVE_SOC "VI22"
-#define CAR_MAX_KW 11.0
+#define CAR_MAX_KW 12.0
 #define BATTERY_CAR_KW 6.0
 #define SURPLUS_MIN_KW 1.0
 #define ONE_SECOND_SLEEP 1000 // Sleep for 1s in the main loop
 #define VI_PLAN_FRESH "VI9"
 #define VI_PLAN_CAR "VI18"
 #define VI_PLAN_CAR_KW "VI19"
+#define INPUT_PRIORITY 6
+#define INPUT_PRIORITY_KW 7
+#define PRIORITY_MIN_KW 1.38
 
 float userConfigEcoPower;
 float userConfigSocTreshold;
@@ -64,6 +72,8 @@ while (TRUE) {
     float surplus;
     float minimumKw;
     float sum;
+    int priorityOn;
+    float priorityKw;
     userConfigEcoPower = getinput(0);
     currentSolarPowerProduction = getinput(1);
     batterySoc = getinput(2);
@@ -76,6 +86,8 @@ while (TRUE) {
     solarPowerReadings[solarPowerReadingsIndex] = currentSolarPowerProduction;
     solarPowerReadingsIndex = (solarPowerReadingsIndex + 1) % SECONDS_IN_A_MINUTE;
 
+    priorityOn = getinput(INPUT_PRIORITY) == 1;
+    priorityKw = CAR_MAX_KW;
     if (planFresh && planCarCommand >= BATTERY_COMMAND) {
         reserveSoc = getio(VI_PLAN_RESERVE_SOC);
         if (reserveSoc < 20.0 || reserveSoc > 100.0)
@@ -180,13 +192,21 @@ while (TRUE) {
         setoutput(1, carCharging);
     }
 
+    // Peco is output 1. 16 A at about 235 V is 11.3 kW, so 11 kW makes the manager open the charge.
+    ecoPower = CAR_MAX_KW;
+    carCharging = 1;
+    setoutput(0, ecoPower);
+    setoutput(1, carCharging);
+
      sprintf(debugOutput,
-             "Inputs\n\nUser config ECO Power: %f kW\nSolar Power: %f kW\nBattery SOC: %f percent\nGrid: %f kW\nBattery power: %f kW\n\nOutputs\n\nCar Charging Enabled: %d\nECO Power: %f kW\n\n",
+             "Inputs\n\nUser config ECO Power: %f kW\nSolar Power: %f kW\nBattery SOC: %f percent\nGrid: %f kW\nBattery power: %f kW\nPriority: %d\nPriority power: %f kW\n\nOutputs\n\nCar Charging Enabled: %d\nECO Power: %f kW\n\n",
              userConfigEcoPower,
              currentSolarPowerProduction,
              batterySoc,
              gridKw,
              batteryKw,
+             priorityOn,
+             priorityKw,
              carCharging,
              ecoPower);
 
