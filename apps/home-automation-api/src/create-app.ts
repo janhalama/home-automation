@@ -3,7 +3,6 @@ This module builds the Fastify application instance for local and serverless use
 It wires configuration, validation, routes, and shared dependencies.
 */
 
-import { dirname, join } from "node:path";
 import Fastify from "fastify";
 import { TypeBoxTypeProvider } from "@fastify/type-provider-typebox";
 import { readEnvironmentConfig, type EnvironmentConfig } from "./config/environment.js";
@@ -23,6 +22,7 @@ import type { CarReading } from "./services/car-energy.js";
 import type { CarPoint } from "./services/car-day.js";
 import { readTeslaMateCar } from "./services/teslamate-car.js";
 import { chargeKwByQuarter, openCarDayQuery, readCarDay } from "./services/teslamate-history.js";
+import { NIGHT_CHARGING_CONTROL, nightChargingAllowed, readLoxoneControl } from "./services/loxone-reading.js";
 
 export type AppDeps = EnvironmentConfig & {
   fetchImpl: FetchImpl;
@@ -50,8 +50,12 @@ type CreateAppDeps = Omit<
   teslamateDatabaseUser?: string;
   teslamateDatabasePassword?: string;
   teslamateDatabaseName?: string;
+  loxoneHost?: string;
+  loxoneUser?: string;
+  loxonePassword?: string;
   readCar?: () => Promise<CarReading>;
   readCarDay?: (date: string) => Promise<CarPoint[]>;
+  clock?: () => Date;
 };
 
 /* Create application dependencies from environment variables. */
@@ -167,11 +171,19 @@ export function createApp(deps: CreateAppDeps = createEnvironmentDeps()) {
     readCar,
     readCarDay: readCarDayForPlan,
     readChargeKw,
-    carChargeNowPath: houseArchivePath ? join(dirname(houseArchivePath), "car-charge-now.json") : "",
     fetchImpl: deps.fetchImpl,
     predictionStore,
     forecastSolarApiKey: deps.forecastSolarApiKey,
-    timeoutMs: deps.timeoutMs
+    timeoutMs: deps.timeoutMs,
+    clock: deps.clock,
+    readNightCharging: deps.loxoneHost && deps.loxoneUser
+      ? async () => nightChargingAllowed(await readLoxoneControl(
+        deps.loxoneHost ?? "",
+        deps.loxoneUser ?? "",
+        deps.loxonePassword ?? "",
+        NIGHT_CHARGING_CONTROL
+      ))
+      : undefined
   });
   registerSunCoverRoute(app, {
     apiKey: deps.apiKey,

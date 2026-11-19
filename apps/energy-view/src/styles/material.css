@@ -60,6 +60,10 @@ h2 {
   letter-spacing: 0.1px;
 }
 
+h2.follows {
+  margin-top: 28px;
+}
+
 form, .row {
   display: flex;
   flex-wrap: wrap;
@@ -109,7 +113,7 @@ button.quiet {
   gap: 12px;
 }
 
-#car-charge {
+#recalculate-plan {
   display: inline-flex;
   align-items: center;
   margin-top: 16px;
@@ -233,6 +237,66 @@ main:not(.is-loading) .chart-wrap:has(canvas.drawn)::before {
   margin: 0 0 4px;
   font-size: 14px;
   font-weight: 500;
+}
+
+.plan-gauge {
+  display: grid;
+  grid-template-columns: 72px 1fr;
+  align-items: start;
+}
+
+.plan-gauge-names {
+  display: grid;
+  grid-template-rows: repeat(3, 28px);
+  gap: 8px;
+  padding-top: 16px;
+  font-size: 12px;
+}
+
+.plan-gauge-names span {
+  display: flex;
+  align-items: center;
+}
+
+.plan-bar .plan-gauge svg {
+  display: block;
+  width: 100%;
+}
+
+.plan-changes {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+}
+
+.plan-changes button {
+  background: none;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  padding: 4px 0;
+  text-align: left;
+}
+
+.plan-snapshot {
+  align-items: center;
+  background: rgba(29, 25, 43, 0.45);
+  display: flex;
+  inset: 0;
+  justify-content: center;
+  position: fixed;
+}
+
+.plan-snapshot[hidden] {
+  display: none;
+}
+
+.plan-snapshot-sheet {
+  background: #fff;
+  max-width: 960px;
+  padding: 16px;
+  width: min(960px, 92vw);
 }
 
 @keyframes placeholder-shimmer {

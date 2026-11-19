@@ -7,6 +7,8 @@ import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import type { SpotPrice } from "./ote-day-ahead.js";
+import type { DecisionSegment, PlanChange, PlanInputs } from "./day-decision.js";
+import { decisionStore } from "./day-decision-store.js";
 
 export type HeatingSample = {
   at: string;
@@ -44,7 +46,22 @@ export type HouseArchive = {
   listHeatingTemperatures(date: string): { at: string; temperatureC: number }[];
   hasHeatingHistory(): boolean;
   latestHeating(): HeatingSample | null;
+  listChargeWindows(date: string): StoredChargeWindow[];
+  saveChargeWindows(date: string, windows: StoredChargeWindow[]): void;
+  listDayDecisions(date: string): DecisionSegment[];
+  saveDayDecisions(date: string, segments: DecisionSegment[]): void;
+  listPlanChanges(date: string): PlanChange[];
+  appendPlanChange(date: string, change: PlanChange): void;
+  readPlanInputs(date: string): PlanInputs | null;
+  savePlanInputs(date: string, inputs: PlanInputs): void;
   close(): void;
+};
+
+export type StoredChargeWindow = {
+  from: string;
+  to: string;
+  kw: number;
+  kwh: number;
 };
 
 /* Open a period when the heater turns on, and close it when the heater turns off. */
@@ -171,6 +188,41 @@ export function openHouseArchive(path: string): HouseArchive {
       at TEXT PRIMARY KEY,
       temperature_c REAL NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS battery_charge_windows (
+      date TEXT NOT NULL,
+      from_clock TEXT NOT NULL,
+      to_clock TEXT NOT NULL,
+      kw REAL NOT NULL,
+      kwh REAL NOT NULL,
+      PRIMARY KEY (date, from_clock, to_clock)
+    );
+    CREATE TABLE IF NOT EXISTS day_decisions (
+      date TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      from_clock TEXT NOT NULL,
+      to_clock TEXT NOT NULL,
+      kw REAL NOT NULL,
+      mode TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS plan_changes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      date TEXT NOT NULL,
+      at TEXT NOT NULL,
+      trigger TEXT NOT NULL,
+      result TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS plan_change_segments (
+      change_id INTEGER NOT NULL,
+      kind TEXT NOT NULL,
+      from_clock TEXT NOT NULL,
+      to_clock TEXT NOT NULL,
+      kw REAL NOT NULL,
+      mode TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS plan_inputs (
+      date TEXT PRIMARY KEY,
+      payload TEXT NOT NULL
+    );
   `);
   ensureLoadColumns(database);
 
@@ -233,6 +285,20 @@ export function openHouseArchive(path: string): HouseArchive {
   const readLatest = database.prepare(`
     SELECT at, heating_on, temperature_c FROM heating_latest WHERE id = 1
   `);
+  const listChargeWindows = database.prepare(`
+    SELECT from_clock, to_clock, kw, kwh
+    FROM battery_charge_windows
+    WHERE date = ?
+    ORDER BY rowid
+  `);
+  const deleteChargeWindows = database.prepare(`
+    DELETE FROM battery_charge_windows WHERE date = ?
+  `);
+  const insertChargeWindow = database.prepare(`
+    INSERT INTO battery_charge_windows (date, from_clock, to_clock, kw, kwh)
+    VALUES (?, ?, ?, ?, ?)
+  `);
+  const decisions = decisionStore(database);
   const savePower = database.prepare(`
     INSERT INTO power_samples (
       at, pv_kw, meter_kw, battery_kw, soc_percent, car_charge_kw, tank_kw, battery_charge_kw
@@ -332,6 +398,28 @@ export function openHouseArchive(path: string): HouseArchive {
       const row = countPeriods.get() as { count: number };
       return row.count > 0;
     },
+    listChargeWindows(date) {
+      const rows = listChargeWindows.all(date) as Array<{
+        from_clock: string;
+        to_clock: string;
+        kw: number;
+        kwh: number;
+      }>;
+      return rows.map((row) => ({
+        from: row.from_clock,
+        to: row.to_clock,
+        kw: row.kw,
+        kwh: row.kwh
+      }));
+    },
+    saveChargeWindows(date, windows) {
+      database.exec("BEGIN");
+      deleteChargeWindows.run(date);
+      for (const window of windows)
+        insertChargeWindow.run(date, window.from, window.to, window.kw, window.kwh);
+      database.exec("COMMIT");
+    },
+    ...decisions,
     latestHeating() {
       const row = readLatest.get() as
         | { at: string; heating_on: number; temperature_c: number }

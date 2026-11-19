@@ -1,8 +1,9 @@
 /*
 The battery row on the day chart.
-Charge sits below zero. A quarter that has already passed uses the plan from
-the state of charge at the start of the day, so a night charge stays on the
-chart after the battery is full. A quarter still ahead uses the live plan.
+Charge sits below zero. When the plan carries the stored charge list, that
+list is the green block, including a window that has already ended. Without
+the list, a past quarter keeps the sunrise plan and a later quarter uses the
+live plan.
 */
 
 export type BatteryPlanWindow = {
@@ -20,6 +21,7 @@ export type BatteryPlanWindow = {
   carFrom?: string | null;
   carTo?: string | null;
   carKw?: number;
+  batteryCharges?: { from: string; to: string; kw: number }[];
 };
 
 const BREAKER_KW = 17;
@@ -74,6 +76,21 @@ function overlaps(from: string, to: string, fromMin: number, toMin: number): boo
   if (end > start)
     return start < toMin && end > fromMin;
   return overlaps(from, "24:00", fromMin, toMin) || overlaps("00:00", to, fromMin, toMin);
+}
+
+/* The stored charge that covers this quarter, when the plan carries the list. */
+function loggedCharge(plan: BatteryPlanWindow | null, time: string): { from: string; to: string; kw: number } | null {
+  if (!plan?.batteryCharges)
+    return null;
+  return plan.batteryCharges.find((window) => inSlot(time, window.from, window.to)) ?? null;
+}
+
+/* Charge power from the stored list. The car and the tank still cut only their own minutes. */
+function loggedChargeKw(plan: BatteryPlanWindow, time: string): number | null {
+  const hit = loggedCharge(plan, time);
+  if (!hit)
+    return null;
+  return -chargeKw({ ...plan, batteryKw: hit.kw, batteryFrom: hit.from, batteryTo: hit.to }, time);
 }
 
 /* Sale and charge labels this plan books. */
@@ -140,22 +157,49 @@ export type BatteryMeasuredParts = {
   sale: number | null;
 };
 
+/* Grid share of a charge. The panels cover it first. A buy cannot exceed the import. Without a panel reading the import covers the charge and the rest stays the sun. */
+function chargeFromGrid(charge: number, meterKw: number | null, pvKw: number | null): number {
+  const importing = meterKw === null ? charge : Math.max(0, -meterKw);
+  if (pvKw === null)
+    return Math.min(charge, importing);
+  const exporting = meterKw !== null && meterKw > 0 ? meterKw : 0;
+  const fromPanels = Math.min(charge, Math.max(0, pvKw - exporting));
+  return Math.min(importing, charge - fromPanels);
+}
+
+/* Share of a discharge that left through the meter during a planned sale. The rest stayed in the house. */
+function soldKw(discharge: number, meterKw: number | null, plannedSale: boolean): number {
+  if (!plannedSale)
+    return 0;
+  if (meterKw === null)
+    return discharge;
+  return Math.min(discharge, Math.max(0, meterKw));
+}
+
 /* Charge below zero splits into a grid buy and the sun. Discharge above zero is a sale or the house. */
-export function batteryMeasuredParts(batteryKw: number | null, meterKw: number | null, plannedSale: boolean): BatteryMeasuredParts {
+export function batteryMeasuredParts(
+  batteryKw: number | null,
+  meterKw: number | null,
+  plannedSale: boolean,
+  pvKw: number | null = null
+): BatteryMeasuredParts {
   if (batteryKw === null)
     return { buy: null, sun: null, house: null, sale: null };
   if (batteryKw < 0) {
     const charge = -batteryKw;
-    const fromGrid = meterKw === null ? charge : Math.min(charge, Math.max(0, -meterKw));
+    const fromGrid = chargeFromGrid(charge, meterKw, pvKw);
     const fromSun = charge - fromGrid;
     return { buy: fromGrid === 0 ? 0 : -fromGrid, sun: fromSun === 0 ? 0 : -fromSun, house: 0, sale: 0 };
   }
-  if (batteryKw > 0 && plannedSale)
-    return { buy: 0, sun: 0, house: 0, sale: batteryKw };
+  if (batteryKw > 0) {
+    const sold = soldKw(batteryKw, meterKw, plannedSale);
+    const house = batteryKw - sold;
+    return { buy: 0, sun: 0, house: house === 0 ? 0 : house, sale: sold === 0 ? 0 : sold };
+  }
   return { buy: 0, sun: 0, house: batteryKw, sale: 0 };
 }
 
-/* Buy, house use, and sale for one quarter. The house line stops where a sale starts. */
+/* Buy and sale for one quarter. The plan does not schedule house consumption. */
 export function batteryPlanParts(
   time: string,
   live: BatteryPlanWindow | null,
@@ -164,17 +208,25 @@ export function batteryPlanParts(
 ): BatteryPlanParts {
   const plan = planForQuarter(time, live, opening, recordedUntilMinute);
   const empty = { buy: null, house: null, sale: null };
+  if (live?.batteryCharges) {
+    const buy = loggedChargeKw(live, time) ?? 0;
+    const selling = Boolean(plan && inSlot(time, plan.batterySellFrom, plan.batterySellTo));
+    return {
+      buy,
+      house: 0,
+      sale: selling ? plan?.batterySellKw ?? 0 : 0
+    };
+  }
   if (!plan)
     return empty;
   const kw = plannedKw(plan, time);
   const selling = inSlot(time, plan.batterySellFrom, plan.batterySellTo);
-  const using = inSlot(time, plan.batteryDischargeFrom ?? null, plan.batteryDischargeTo ?? null);
-  if (kw === null && !using)
+  if (kw === null)
     return empty;
   return {
-    buy: kw !== null && kw < 0 ? kw : 0,
-    house: using && !selling ? plan.batteryDischargeKw ?? 0 : 0,
-    sale: kw !== null && kw > 0 ? kw : 0
+    buy: kw < 0 ? kw : 0,
+    house: 0,
+    sale: kw > 0 ? kw : 0
   };
 }
 
@@ -185,21 +237,35 @@ export function batteryPlanKw(
   opening: BatteryPlanWindow | null,
   recordedUntilMinute: number | null
 ): number | null {
+  if (live?.batteryCharges)
+    return loggedChargeKw(live, time) ?? 0;
   return plannedKw(planForQuarter(time, live, opening, recordedUntilMinute), time);
 }
 
-/* Slots the row draws. Past hours come from the morning plan. Later hours come from the live plan. */
+/* Slots the row draws. A stored charge list replaces the sunrise charge. Sales stay on the merged plan. */
 function shownSlots(
   live: BatteryPlanWindow | null,
   opening: BatteryPlanWindow | null,
   recordedUntilMinute: number | null
 ): NamedSlot[] {
-  const slots = recordedUntilMinute === null
+  const merged = recordedUntilMinute === null
     ? namedSlots(opening ?? live)
     : [
       ...namedSlots(opening).filter((slot) => overlaps(slot.from, slot.to, 0, recordedUntilMinute)),
       ...namedSlots(live).filter((slot) => overlaps(slot.from, slot.to, recordedUntilMinute, 24 * 60))
     ];
+  const slots = live?.batteryCharges
+    ? [
+      ...live.batteryCharges.map((window) => ({
+        label: `charge ${window.from}–${window.to}`,
+        from: window.from,
+        to: window.to,
+        kind: "charge" as const,
+        kw: window.kw
+      })),
+      ...merged.filter((slot) => slot.kind === "sale")
+    ]
+    : merged;
   return slots.filter((slot, index) => slots.findIndex((other) => other.label === slot.label) === index);
 }
 

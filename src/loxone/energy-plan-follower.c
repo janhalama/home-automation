@@ -2,7 +2,7 @@
  Loxone programming block that pulls the energy plan and holds the live decision.
 
  This replaces the forecast fetch block. The trigger is not used.
- The block fetches when it starts, and again every 15 minutes.
+ The block fetches when it starts, and again every minute.
  A failed fetch tries again after one minute. Retrying every second runs the block out of memory.
  A plan older than one hour is no longer fresh.
  - I1: the old trigger. Leave the wire or remove it. Nothing reads it.
@@ -26,6 +26,16 @@
  - Text output 1: Requested address, without the API key
  - Text output 2: Response body
  - Text output 3: Status
+
+ Virtual input VI23 is the fetch heartbeat. The thousands digit is the phase,
+ and the rest counts seconds while the loop is running.
+ - 0: started, no pull yet
+ - 1: inside the server call. A number that stays here means the call is stuck
+ - 2: the last pull stored a plan
+ - 3: the server did not answer
+ - 4: the API key or the server address is missing
+ - 5: the body was not a plan
+ A value that stays 0 means this block is not running.
 
  Wiring once this block is saved in Config:
  - Tank block: fresh and the tank command.
@@ -56,8 +66,16 @@
 #define VI_PLAN_BATTERY_CHARGE "VI20"
 #define VI_PLAN_BATTERY_KW "VI21"
 #define VI_PLAN_RESERVE_SOC "VI22"
+#define VI_PLAN_FETCH "VI23"
+#define FETCH_PHASE_SCALE 1000
+#define FETCH_PHASE_START 0
+#define FETCH_PHASE_CALLING 1
+#define FETCH_PHASE_STORED 2
+#define FETCH_PHASE_NO_RESPONSE 3
+#define FETCH_PHASE_MISSING 4
+#define FETCH_PHASE_UNEXPECTED 5
 
-#define FETCH_SECONDS 900
+#define FETCH_SECONDS 60
 #define RETRY_SECONDS 60
 #define FRESH_SECONDS 3600
 
@@ -84,8 +102,16 @@ int hasPlan;
 int fetchFailed;
 int sinceFetch;
 int sinceAttempt;
+int fetchPhase;
+int fetchBeat;
 char lastError[80];
 char pollErrorCode[32];
+
+/* Remember the phase and publish it. The beat keeps moving only while this loop does. */
+void markFetch(int phase) {
+    fetchPhase = phase;
+    setio(VI_PLAN_FETCH, phase * FETCH_PHASE_SCALE + (fetchBeat % FETCH_PHASE_SCALE));
+}
 
 /* Tell the API why this pull failed. A short code keeps the key's request small. */
 void reportPollError(char* serverAddress, char* apiKey) {
@@ -163,10 +189,12 @@ int pullPlan(char* serverAddress, char* apiKey) {
     char* body;
     sprintf(url, "/api/energy/plan?apiKey=%s", apiKey);
     setoutputtext(DEBUG_URL, "/api/energy/plan");
+    markFetch(FETCH_PHASE_CALLING);
     response = httpget(serverAddress, url);
     if (response == NULL) {
         sprintf(lastError, "error: no response from server");
         sprintf(pollErrorCode, "no_response");
+        markFetch(FETCH_PHASE_NO_RESPONSE);
         setoutputtext(DEBUG_RESPONSE, "");
         return 0;
     }
@@ -174,6 +202,7 @@ int pullPlan(char* serverAddress, char* apiKey) {
     if (body == NULL) {
         sprintf(lastError, "error: no response from server");
         sprintf(pollErrorCode, "no_response");
+        markFetch(FETCH_PHASE_NO_RESPONSE);
         setoutputtext(DEBUG_RESPONSE, "");
         free(response);
         return 0;
@@ -182,6 +211,7 @@ int pullPlan(char* serverAddress, char* apiKey) {
     if (strstr(body, "tank=") == NULL) {
         sprintf(lastError, "error: unexpected response");
         sprintf(pollErrorCode, "unexpected_response");
+        markFetch(FETCH_PHASE_UNEXPECTED);
         free(response);
         return 0;
     }
@@ -207,6 +237,7 @@ int pullPlan(char* serverAddress, char* apiKey) {
     copyValue(body, "batteryHoldTo", batteryHoldTo, 8);
     copyValue(body, "reserveSoc", reserveSocText, 16);
     hasPlan = 1;
+    markFetch(FETCH_PHASE_STORED);
     free(response);
     return 1;
 }
@@ -299,6 +330,8 @@ hasPlan = 0;
 fetchFailed = 0;
 sinceFetch = FRESH_SECONDS + 1;
 sinceAttempt = FETCH_SECONDS;
+fetchPhase = FETCH_PHASE_START;
+fetchBeat = 0;
 lastError[0] = 0;
 pollErrorCode[0] = 0;
 tankFlag[0] = 0;
@@ -316,6 +349,7 @@ while (TRUE) {
         if (apiKey == NULL || serverAddress == NULL || apiKey[0] == 0 || serverAddress[0] == 0) {
             sprintf(lastError, "error: missing api key or server");
             sprintf(pollErrorCode, "missing_config");
+            markFetch(FETCH_PHASE_MISSING);
             setoutputtext(DEBUG_URL, "");
             setoutputtext(DEBUG_RESPONSE, "");
             fetchFailed = 1;
@@ -329,6 +363,8 @@ while (TRUE) {
         sinceAttempt = 0;
     }
     publishPlan();
+    markFetch(fetchPhase);
+    fetchBeat = fetchBeat + 1;
     sinceFetch = sinceFetch + 1;
     sinceAttempt = sinceAttempt + 1;
     sleep(1000);

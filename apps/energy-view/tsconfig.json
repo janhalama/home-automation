@@ -3,5 +3,6 @@
   "compilerOptions": {
     "strictNullChecks": true
   },
-  "include": [".astro/types.d.ts", "src/**/*"]
+  "include": [".astro/types.d.ts", "src/**/*"],
+  "exclude": ["src/**/*.test.ts"]
 }

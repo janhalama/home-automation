@@ -2,7 +2,7 @@
 The shortest run of quarter-hour prices that can finish a job.
 A longer run is used only when no shorter run can hold the energy.
 A run may cross midnight when today is joined to the next morning.
-The battery chooses how far into that morning the run may reach. The tank and the car stop at 06:00.
+The battery chooses how far into that morning the run may reach. The tank and the car stop at 06:00. With night charging off, the car uses 06:00–24:00 instead.
 */
 
 export type PriceQuarter = {
@@ -17,6 +17,8 @@ export type Slot = {
 
 const MINUTES_PER_DAY = 24 * 60;
 const MORNING_END = "06:00";
+const DAY_START = 6 * 60;
+const NIGHT_START = 18 * 60;
 
 type PlacedQuarter = PriceQuarter & {
   fromMin: number;
@@ -105,6 +107,25 @@ export function cheapestSlotUntil(
   const today = place(before, 0).filter((quarter) => quarter.toMin > startMin);
   const tomorrow = place(after, 1).filter((quarter) => quarter.toMin <= deadline);
   const ordered = [...today, ...tomorrow].sort((left, right) => left.fromMin - right.fromMin);
+  return cheapestRun(ordered, kwh, powerKw);
+}
+
+/* Cheapest daytime run, 06:00–24:00. After 18:00 only tomorrow's daytime is open. */
+export function cheapestDaytimeSlot(
+  today: PriceQuarter[],
+  tomorrow: PriceQuarter[] | null,
+  kwh: number,
+  powerKw: number,
+  startAt: string | null
+): Slot | null {
+  const at = startAt === null ? null : minutes(startAt);
+  const includeToday = at === null || at < NIGHT_START;
+  const todayFrom = at === null || at < DAY_START ? DAY_START : at;
+  const todayQuarters = includeToday
+    ? place(today, 0).filter((quarter) => quarter.fromMin >= DAY_START && quarter.toMin > todayFrom)
+    : [];
+  const tomorrowQuarters = place(tomorrow ?? [], 1).filter((quarter) => quarter.fromMin - MINUTES_PER_DAY >= DAY_START);
+  const ordered = [...todayQuarters, ...tomorrowQuarters].sort((left, right) => left.fromMin - right.fromMin);
   return cheapestRun(ordered, kwh, powerKw);
 }
 

@@ -5,6 +5,7 @@ Loads one day and the live forecast from the energy API and draws them.
 import { renderBalanceHistory, type BalancePoint } from "./balance-chart.ts";
 import { batteryChargeSentence } from "./battery-plan-series.ts";
 import { renderDayRows } from "./day-rows.ts";
+import { parseChangeList, parseSegmentList, pragueClock, renderChangeList, renderPlanBar, type ChangeLine, type StoredSegment } from "./plan-bar.ts";
 import { renderReserveHistory, type ReservePoint } from "./reserve-chart.ts";
 
 type EnergyPoint = {
@@ -75,9 +76,11 @@ type DayPlan = {
   batteryDischargeTo: string | null;
   batteryDischargeKw: number;
   reserveSoc: number | null;
+  batteryCharges?: { from: string; to: string; kw: number }[];
+  decisions: StoredSegment[];
+  planChanges: ChangeLine[];
 };
 const STORAGE_KEY = "energy-view-connection";
-const charts: Chart[] = [];
 
 /* A public build setting. The page refuses to start without it. */
 function publicEnv(name: string): string {
@@ -139,8 +142,25 @@ function parsePlan(text: string): DayPlan | null {
     batteryDischargeFrom: clock("batteryDischargeFrom"),
     batteryDischargeTo: clock("batteryDischargeTo"),
     batteryDischargeKw: Number(values.get("batteryDischargeKw") ?? 0),
-    reserveSoc: values.get("reserveSoc") ? Number(values.get("reserveSoc")) : null
+    reserveSoc: values.get("reserveSoc") ? Number(values.get("reserveSoc")) : null,
+    batteryCharges: parseChargeList(values.get("batteryCharges")),
+    decisions: parseSegmentList(values.get("decisions")),
+    planChanges: parseChangeList(values.get("planChanges"), values.get("planSnapshots"))
   };
+}
+
+/* Stored charge windows. A missing line means this plan has no list yet. */
+function parseChargeList(value: string | undefined): { from: string; to: string; kw: number }[] | undefined {
+  if (value === undefined)
+    return undefined;
+  if (!value)
+    return [];
+  return value.split(",").flatMap((part) => {
+    const match = /^(\d{2}:\d{2})-(\d{2}:\d{2})@(\d+(?:\.\d+)?)$/.exec(part);
+    if (!match)
+      return [];
+    return [{ from: match[1], to: match[2], kw: Number(match[3]) }];
+  });
 }
 
 /* GET the plan as text. asOf=open is the plan from the state of charge at the start of the day. */
@@ -211,9 +231,6 @@ function renderPlanLine(plan: DayPlan | null, opening: DayPlan | null, recordedU
   const slot = (label: string, from: string | null, to: string | null, extra = "") =>
     from && to ? `${label} ${from}–${to}${extra}` : `${label} off`;
   const charge = batteryChargeSentence(plan, opening, recordedUntilMinute);
-  const discharge = plan.batteryDischargeFrom && plan.batteryDischargeTo
-    ? `Battery covers the house ${plan.batteryDischargeFrom}–${plan.batteryDischargeTo} at ${plan.batteryDischargeKw.toFixed(2)} kW`
-    : "No battery discharge";
   const reserveText = plan.reserveSoc === null ? "the reserve" : `${plan.reserveSoc.toFixed(0)}%`;
   const carText = plan.car === "battery"
     ? `Obluda takes the house battery at ${plan.carKw.toFixed(0)} kW, more when the sun covers it, down to ${reserveText}${plan.carFrom && plan.carTo ? `, about ${plan.carFrom}–${plan.carTo}` : ""}`
@@ -227,8 +244,7 @@ function renderPlanLine(plan: DayPlan | null, opening: DayPlan | null, recordedU
     slot("Tank plan", plan.tankFrom, plan.tankTo),
     carText,
     charge,
-    sale,
-    discharge
+    sale
   ].join(". ") + ".";
 }
 /* One number card. */
@@ -355,39 +371,9 @@ function setPageLoading(isLoading: boolean): void {
     return;
   main.classList.toggle("is-loading", isLoading);
   main.setAttribute("aria-busy", isLoading ? "true" : "false");
-}
-
-/* Show whether the manual car charge is on. */
-async function refreshCarChargeButton(apiBase: string, apiKey: string): Promise<void> {
-  const button = document.querySelector("#car-charge");
-  const note = document.querySelector("#car-charge-note");
-  if (!(button instanceof HTMLButtonElement))
-    return;
-  const response = await fetch(`${apiBase}/api/energy/car-charge`, {
-    headers: { "X-API-Key": apiKey }
-  });
-  const on = response.ok && (await response.text()).includes("on=1");
-  button.dataset.on = on ? "1" : "0";
-  button.textContent = on ? "Stop charging Obluda" : "Charge Obluda now";
-  if (note)
-    note.textContent = on ? "Charging is requested. The wallbox follows within 15 minutes." : "";
-}
-
-/* Flip the manual car charge and say when the wallbox will follow. */
-async function toggleCarCharge(): Promise<void> {
-  const apiBase = (document.querySelector("#api-base") as HTMLInputElement).value.replace(/\/$/, "");
-  const apiKey = (document.querySelector("#api-key") as HTMLInputElement).value;
-  const button = document.querySelector("#car-charge");
-  if (!(button instanceof HTMLButtonElement))
-    return;
-  const next = button.dataset.on === "1" ? "0" : "1";
-  const response = await fetch(`${apiBase}/api/energy/car-charge?on=${next}`, {
-    method: "POST",
-    headers: { "X-API-Key": apiKey }
-  });
-  if (!response.ok)
-    throw new Error("The charge switch was refused");
-  await refreshCarChargeButton(apiBase, apiKey);
+  const button = document.querySelector("#recalculate-plan");
+  if (button instanceof HTMLButtonElement)
+    button.disabled = isLoading;
 }
 
 /* Load the live state and the selected day. */
@@ -404,7 +390,8 @@ async function loadDay(event?: Event): Promise<void> {
     status.textContent = "";
   }
   try {
-    const today = day === pragueToday();
+    const todayName = pragueToday();
+    const today = day === todayName;
     const [live, series, livePlan, openingPlan, car, reserve, balance, sunCover] = await Promise.all([
       loadJson<LiveResponse>(apiBase, apiKey, "/api/energy/live"),
       loadJson<SeriesResponse>(apiBase, apiKey, `/api/energy/series?date=${day}`),
@@ -427,12 +414,21 @@ async function loadDay(event?: Event): Promise<void> {
     if (balanceCanvas instanceof HTMLCanvasElement)
       renderBalanceHistory(balanceCanvas, balance.days);
     renderLive(live);
-    await refreshCarChargeButton(apiBase, apiKey);
     renderScores(series, balance.days.find((item) => item.date === day) ?? null);
     const hasReality = series.points.some((point) => point.pvKw !== null || point.meterKw !== null);
     renderDayLabel(day, hasReality);
     const recordedUntilMinute = today ? pragueMinutesNow() : null;
     renderPlanLine(plan, openingPlan, recordedUntilMinute);
+    const bar = document.querySelector("#plan-bar");
+    const changeList = document.querySelector("#plan-changes");
+    const snapshot = document.querySelector("#plan-snapshot");
+    const decisions = plan?.decisions ?? [];
+    if (bar instanceof HTMLElement) {
+      const future = day > todayName;
+      renderPlanBar(bar, decisions, future ? "00:00" : today ? pragueClock() : null, today);
+    }
+    if (changeList instanceof HTMLElement && snapshot instanceof HTMLElement)
+      renderChangeList(changeList, snapshot, plan?.planChanges ?? []);
     const rows = document.querySelector("#day-rows");
     if (rows)
       renderDayRows(rows as HTMLElement, {
@@ -442,7 +438,9 @@ async function loadDay(event?: Event): Promise<void> {
         car,
         forecastKwh: today ? live.todayKwh : null,
         sunCover,
-        recordedUntilMinute
+        recordedUntilMinute,
+        decisions,
+        now: today ? pragueClock() : null
       });
     const missing = series.points.length === 0
       ? "This day has no prices yet, so there is no plan to draw."
@@ -469,13 +467,16 @@ const day = document.querySelector("#day") as HTMLInputElement;
 apiBase.value = settings.apiBase;
 apiKey.value = settings.apiKey;
 day.value = pragueToday();
-document.querySelector("#car-charge")?.addEventListener("click", () => void toggleCarCharge().catch((error: unknown) => {
-  const status = document.querySelector("#status");
-  if (!status)
-    return;
-  status.className = "status error";
-  status.textContent = error instanceof Error ? error.message : "The charge switch failed";
-}));
+document.querySelector("#recalculate-plan")?.addEventListener("click", () => {
+  const note = document.querySelector("#plan-note");
+  if (note)
+    note.textContent = "";
+  void loadDay().then(() => {
+    const status = document.querySelector("#status");
+    if (note && !status?.classList.contains("error"))
+      note.textContent = "Plan refreshed. The Miniserver reads it within 15 minutes.";
+  });
+});
 document.querySelector("#connection")?.addEventListener("submit", (event) => void loadDay(event));
 day.addEventListener("change", () => void loadDay());
 document.querySelector("#prev-day")?.addEventListener("click", () => {

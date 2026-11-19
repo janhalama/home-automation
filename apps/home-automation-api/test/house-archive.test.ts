@@ -86,4 +86,47 @@ describe("house archive", () => {
     expect(archive.latestPowerSampleBefore("2026-10-27")).toBeNull();
     archive.close();
   });
+
+  it("stores the issued decision and lists change lines newest first", () => {
+    const archive = openHouseArchive(":memory:");
+    expect(archive.listDayDecisions("2026-11-19")).toEqual([]);
+    expect(archive.listPlanChanges("2026-11-19")).toEqual([]);
+
+    archive.saveDayDecisions("2026-11-19", [
+      { kind: "tank", from: "08:00", to: "12:00", kw: 2.5, mode: "" },
+      { kind: "battery-buy", from: "00:00", to: "02:15", kw: 2.5, mode: "" }
+    ]);
+    archive.appendPlanChange("2026-11-19", {
+      at: "02:16",
+      trigger: "Booked charge ended",
+      result: "Battery buy 02:30–03:00 at 6 kW.",
+      segments: [
+        { kind: "battery-buy", from: "00:00", to: "02:15", kw: 2.5, mode: "" },
+        { kind: "battery-buy", from: "02:30", to: "03:00", kw: 6, mode: "" }
+      ]
+    });
+    archive.appendPlanChange("2026-11-19", {
+      at: "06:00",
+      trigger: "The clock",
+      result: "Tank 22:00–24:00.",
+      segments: [{ kind: "tank", from: "22:00", to: "24:00", kw: 2.5, mode: "" }]
+    });
+
+    expect(archive.listDayDecisions("2026-11-19")).toEqual([
+      { kind: "tank", from: "08:00", to: "12:00", kw: 2.5, mode: "" },
+      { kind: "battery-buy", from: "00:00", to: "02:15", kw: 2.5, mode: "" }
+    ]);
+    expect(archive.listPlanChanges("2026-11-19").map((line) => line.at)).toEqual(["06:00", "02:16"]);
+    expect(archive.listPlanChanges("2026-11-19")[0]?.segments).toEqual([
+      { kind: "tank", from: "22:00", to: "24:00", kw: 2.5, mode: "" }
+    ]);
+
+    archive.saveDayDecisions("2026-11-19", [
+      { kind: "car", from: "23:00", to: "24:00", kw: 11, mode: "grid" }
+    ]);
+    expect(archive.listDayDecisions("2026-11-19")).toEqual([
+      { kind: "car", from: "23:00", to: "24:00", kw: 11, mode: "grid" }
+    ]);
+    archive.close();
+  });
 });

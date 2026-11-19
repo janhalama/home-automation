@@ -70,9 +70,38 @@ describe("energy plan", () => {
     expect(plan.batterySellFrom).toBe("01:00");
     expect(plan.batterySellTo).toBe("01:15");
     expect(plan.batterySellKw).toBe(8);
-    expect(plan.batteryDischargeFrom).toBe("18:00");
-    expect(plan.batteryDischargeTo).toBe("06:00");
-    expect(plan.batteryDischargeKw).toBeCloseTo(0.7 / 12, 5);
+    expect(plan.batteryDischargeFrom).toBeNull();
+    expect(plan.batteryDischargeTo).toBeNull();
+    expect(plan.batteryDischargeKw).toBe(0);
+  });
+
+  it("buys the car in the daytime when night charging is switched off", () => {
+    const today = prices([
+      ["03:45-04:00", 20],
+      ["20:00-20:15", 80]
+    ]);
+    const tomorrow = prices([
+      ["03:00-03:15", 15],
+      ["11:00-11:15", 5],
+      ["12:00-12:15", 40]
+    ]);
+    const shared = {
+      prices: today,
+      tomorrowPrices: tomorrow,
+      startAt: "20:30",
+      bottomTemperatureC: 60,
+      aboveFloorKwh: 1,
+      socPercent: 25,
+      season: "autumn" as const,
+      lowCloudPercent: 90,
+      pvRemainingKwh: 0,
+      car: { missingKwh: 2.75, usablePercent: 50, pluggedIn: true, atHome: true }
+    };
+    const parked = buildEnergyPlan({ ...shared, nightCharging: false });
+    expect(parked.carFrom).toBe("11:00");
+    expect(parked.carTo).toBe("11:15");
+    const overnight = buildEnergyPlan(shared);
+    expect(overnight.carFrom).toBe("03:00");
   });
 
   it("sizes the car at 11 kW, including while the tank is on", () => {
@@ -978,5 +1007,61 @@ describe("energy plan", () => {
     expect(plan.car).toBe("on");
     expect(plan.carFrom).toBe("23:30");
     expect(plan.carTo).toBe("24:00");
+  });
+
+  it("buys the night through the next sunrise when that morning is not priced", () => {
+    const shared = {
+      prices: prices([
+        ["02:00-02:15", 90],
+        ["11:00-11:15", 100],
+        ["11:15-11:30", 100],
+        ["11:30-11:45", 100],
+        ["11:45-12:00", 100],
+        ["17:00-17:15", 140]
+      ]),
+      date: "2026-11-14",
+      nightHouseKwh: 6,
+      daylightHouseKwh: 0,
+      bottomTemperatureC: 60,
+      aboveFloorKwh: 0,
+      socPercent: 20,
+      lowCloudPercent: 90,
+      pvRemainingKwh: 0,
+      coverNextMorning: true,
+      car: { missingKwh: 0, pluggedIn: true, atHome: true }
+    };
+    const covered = buildEnergyPlan({ ...shared, season: "autumn" });
+    expect(covered.batteryFrom).toBe("11:00");
+    expect(covered.batteryTo).toBe("12:00");
+    const summer = buildEnergyPlan({ ...shared, season: "summer" });
+    expect(summer.battery).toBe("hold");
+  });
+
+  it("buys that night in the cheap night when the night is long enough", () => {
+    const plan = buildEnergyPlan({
+      prices: prices([
+        ["00:00-00:15", 40],
+        ["00:15-00:30", 40],
+        ["00:30-00:45", 40],
+        ["00:45-01:00", 40],
+        ["12:00-12:15", 100],
+        ["12:15-12:30", 100],
+        ["12:30-12:45", 100],
+        ["12:45-13:00", 100]
+      ]),
+      date: "2026-11-19",
+      nightHouseKwh: 6,
+      daylightHouseKwh: 0,
+      bottomTemperatureC: 60,
+      aboveFloorKwh: 0,
+      socPercent: 20,
+      lowCloudPercent: 90,
+      pvRemainingKwh: 0,
+      coverNextMorning: true,
+      season: "autumn",
+      car: { missingKwh: 0, pluggedIn: true, atHome: true }
+    });
+    expect(plan.batteryFrom).toBe("00:00");
+    expect(plan.batteryTo).toBe("01:00");
   });
 });

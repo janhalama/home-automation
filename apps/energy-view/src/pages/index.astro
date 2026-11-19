@@ -22,18 +22,18 @@ const apiBase = import.meta.env.PUBLIC_ENERGY_API_BASE;
 if (!apiBase)
   throw new Error("Missing PUBLIC_ENERGY_API_BASE");
 const dayCharts = [
-  "Price",
-  "Sun",
-  "Sun covers the house",
+  "Spot price",
   "Grid",
-  "Tank temperature",
-  "Heating plan",
-  "Heater relay",
-  "Obluda plan",
-  "Obluda charging",
+  "Sun",
+  "Tank plan",
+  "Tank heating",
+  "Car plan",
+  "Car charging",
   "Battery plan",
   "Battery power",
-  "House battery"
+  "House battery",
+  "Sun covers the house",
+  "Tank temperature"
 ];
 ---
 
@@ -79,8 +79,8 @@ const dayCharts = [
         <div id="live" class="stats">
           {liveStats.map((label) => <div class="stat"><span>{label}</span><strong class="pending">—</strong></div>)}
         </div>
-        <button id="car-charge" type="button">Charge Obluda now</button>
-        <p id="car-charge-note" class="note"></p>
+        <button id="recalculate-plan" type="button">Recalculate plan</button>
+        <p id="plan-note" class="note"></p>
       </section>
 
       <section class="card">
@@ -105,9 +105,13 @@ const dayCharts = [
       </section>
 
       <section class="card">
-        <h2>Plan and what happened</h2>
+        <h2>The plan</h2>
         <p id="day-label" class="note"></p>
         <p id="plan-line" class="note"></p>
+        <div id="plan-bar" class="plan-bar"></div>
+        <ul id="plan-changes" class="plan-changes"></ul>
+        <div id="plan-snapshot" class="plan-snapshot" hidden></div>
+        <h2 class="follows">Where the energy went</h2>
         <div id="day-rows">
           {dayCharts.map((title) => (
             <section class="day-row">

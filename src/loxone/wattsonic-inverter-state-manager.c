@@ -17,8 +17,14 @@
  VI22 is that reserve, sent by the plan: the 20% outage floor plus a sunless
  night and day. While the car may take what is above it, the end-SOC floor
  is the reserve. Once the battery is at the reserve or below, the floor
- returns to VI16 and the house may use it. A sale stops at the reserve.
- A missing VI22 keeps the old 50% line.
+ returns to VI16 and the house may use it. A sale stays in economic mode,
+ which is the discharge that exported before. It runs only while the battery
+ is above the reserve, and the end-SOC register is that reserve, so the floor
+ stays below the battery. Register 50207 stays 0 during a sale. Mode 771 needs
+ the AC limits on 50208 and 50209, and this block does not drive them.
+ A reserve at or above the live SOC does not sell, and it does not charge up
+ to the reserve.
+ A missing VI22 reads 0 and keeps the old 50% line.
  A tank load, or a car charge bought from the grid, still lifts the floor to
  the SOC at the start of that load. The grid covers it. When the load stops,
  the floor returns to VI16.
@@ -40,6 +46,7 @@
  - Output 8: Inverter excess energy available for water heating
  - Output 9: Period 1 start time, register 53012 (hour in the high byte, minute in the low byte)
  - Output 10: Period 1 stop time, register 53013
+ - Output 11: Battery power setpoint, register 50207. Signed, scale 100. Negative charges. 6.00 kW is -600. A sale writes 0.
  - Text Output 1: Current inverter working mode
  - Text Output 2: Inverter state
  - Text Output 3: Debug information
@@ -52,6 +59,7 @@ https://smarthome.exposed/wattsonic-hybrid-inverter-gen3-modbus-rtu-protocol
 #define INVERTER_GENERAL_MODE 257
 #define INVERTER_ECONOMIC_MODE 258
 #define INVERTER_UPS_MODE 259
+#define INVERTER_EMS_BATTERY_MODE 771
 
 // Define battery modes
 #define BATTERY_NO_MODE 0
@@ -60,8 +68,11 @@ https://smarthome.exposed/wattsonic-hybrid-inverter-gen3-modbus-rtu-protocol
 
 // Constants for inverter state
 #define BATTERY_POWER_LIMIT_DISCHARGE_MAX 80
-// 6 kW is half of the 12 kW the battery can accept. On the 10 kW inverter that is 60%.
+// The percent register does not set kilowatts. Mode 771 uses register 50207.
+// 6.0 kW is the most this script commands. The inverter can take 12 kW.
 #define BATTERY_POWER_LIMIT_CHARGE_MAX 60
+#define BATTERY_CHARGE_MAX_KW 6.0
+#define BATTERY_SETPOINT_SCALE 100
 #define BATTERY_POWER_LIMIT_OFF 0
 #define GRID_INJECTION_POWER_LIMIT_MAX 80
 #define GRID_INJECTION_POWER_LIMIT_OFF 0
@@ -84,6 +95,7 @@ https://smarthome.exposed/wattsonic-hybrid-inverter-gen3-modbus-rtu-protocol
 #define OUTPUT_INVERTER_EXCESS_ENERGY_AVAILABLE 7
 #define OUTPUT_PERIOD_START 8
 #define OUTPUT_PERIOD_STOP 9
+#define OUTPUT_BATTERY_POWER_SETPOINT 10
 
 // Constants for text output indexes
 #define TEXT_OUTPUT_MODE 0
@@ -115,6 +127,8 @@ char* mapInverterMode(float mode) {
         return "Economic mode";
     } else if(mode == INVERTER_UPS_MODE) {
         return "UPS mode";
+    } else if(mode == INVERTER_EMS_BATTERY_MODE) {
+        return "Battery control";
     } else {
         return "Unknown mode";
     }
@@ -127,7 +141,8 @@ void updateInverterState() {
     float onGridEndSOCProtection = getio(VI_ONGRID_SOC_PROTECTION_USER_SETTING);
     float onGridEndSOCProtectionUserSetting = onGridEndSOCProtection;
     float reserveSoc = getio(VI_PLAN_RESERVE_SOC);
-    if (reserveSoc <= onGridEndSOCProtectionUserSetting || reserveSoc > 100.0)
+    // 0 is an empty virtual input. A real reserve can sit near the 20% floor.
+    if (reserveSoc <= 0.0 || reserveSoc > 100.0)
         reserveSoc = RESERVE_SOC_FALLBACK;
     int planFresh = getio(VI_PLAN_FRESH) == 1;
     int planOrdersCharge = planFresh && getio(VI_PLAN_BATTERY_CHARGE) == 1;
@@ -148,16 +163,21 @@ void updateInverterState() {
     char inverterState[512];
     char inputs[1024];
     int excessEnergyAvailable = 0;
+    int batteryPowerSetpoint = 0;
 
     // Determine the inverter mode and battery operation
 
     // A fresh plan may buy from the grid or sell the battery. Without one, neither happens.
     if (planOrdersCharge) {
-        newMode = INVERTER_ECONOMIC_MODE;
+        float chargeKw = getio(VI_PLAN_BATTERY_KW);
+        if (chargeKw < 0.1) chargeKw = 0.1;
+        if (chargeKw > BATTERY_CHARGE_MAX_KW) chargeKw = BATTERY_CHARGE_MAX_KW;
+        newMode = INVERTER_EMS_BATTERY_MODE;
+        batteryPowerSetpoint = -(int)(chargeKw * BATTERY_SETPOINT_SCALE);
         batteryMode = BATTERY_CHARGE_MODE; // Charge from grid
         batteryChargeDischargePowerLimit = chargeLimit;
         gridInjectionPowerLimit = GRID_INJECTION_POWER_LIMIT_OFF; // Do not inject power to grid
-        // 100% blocks the discharge floor for this charge. The 60% period limit is what limits the power.
+        // 100% blocks the discharge floor once mode returns to general.
         onGridEndSOCProtection = 100.0;
         periodEnabled = 1;
         periodStart = PERIOD_START_MIDNIGHT;
@@ -167,11 +187,13 @@ void updateInverterState() {
         excessEnergyAvailable = 1;
         
         sprintf(inverterState, "Charging from grid");
-    } else if (planFresh && getio(VI_PLAN_BATTERY_CHARGE) < 0) {
+    } else if (planFresh && getio(VI_PLAN_BATTERY_CHARGE) < 0 && soc > reserveSoc) {
         newMode = INVERTER_ECONOMIC_MODE;
+        batteryPowerSetpoint = 0;
         batteryMode = BATTERY_DISCHARGE_MODE;
         batteryChargeDischargePowerLimit = BATTERY_POWER_LIMIT_DISCHARGE_MAX;
         gridInjectionPowerLimit = GRID_INJECTION_POWER_LIMIT_MAX;
+        // The floor stays under the battery. A higher floor makes this inverter charge.
         onGridEndSOCProtection = reserveSoc;
         periodEnabled = 1;
         periodStart = PERIOD_START_MIDNIGHT;
@@ -221,6 +243,8 @@ void updateInverterState() {
     } else
         batteryHoldActive = 0;
 
+    // The kilowatt setpoint goes out before mode 771, so the first moment is not full power.
+    setoutput(OUTPUT_BATTERY_POWER_SETPOINT, batteryPowerSetpoint);
     setoutput(OUTPUT_MODE, newMode);
     setoutput(OUTPUT_BATTERY_MODE, batteryMode);
     // Start and stop go out before the power limit. 53010 is ignored while the period clock is empty.
@@ -241,8 +265,9 @@ void updateInverterState() {
     setoutputtext(TEXT_OUTPUT_INVERTER_STATE, inverterState);
 
     sprintf(inputs,
-            "SOC: %f\nBattery charge/discharge power limit: %d\nGrid injection power limit: %d\nOn-grid end SOC protection: %f\nPlan fresh: %d\nHold: %d at %f\nExcess energy available: %d\nPeriod enabled: %d\nPeriod start: %d\nPeriod stop: %d",
+            "SOC: %f\nBattery power setpoint: %d\nBattery charge/discharge power limit: %d\nGrid injection power limit: %d\nOn-grid end SOC protection: %f\nPlan fresh: %d\nHold: %d at %f\nExcess energy available: %d\nPeriod enabled: %d\nPeriod start: %d\nPeriod stop: %d",
             soc,
+            batteryPowerSetpoint,
             batteryChargeDischargePowerLimit,
             gridInjectionPowerLimit,
             onGridEndSOCProtection,

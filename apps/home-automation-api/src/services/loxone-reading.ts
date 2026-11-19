@@ -12,6 +12,7 @@ export const PV_POWER_CONTROL = "1c383f2f-00a5-8e4e-ffff2666dbd01f1a";
 export const GRID_POWER_CONTROL = "1c383f2f-00b4-8e7a-ffff2666dbd01f1a";
 export const BATTERY_POWER_STATE = "1c384220-01ab-745b-ffff2666dbd01f1a/all";
 export const SOC_CONTROL = "1c383f2f-0095-8e12-ffff2666dbd01f1a";
+export const NIGHT_CHARGING_CONTROL = "1d2af72d-03cc-0891-ffff2666dbd01f1a";
 
 /* Read the value field from a Miniserver control response. */
 export function parseLoxoneValue(body: string): string {
@@ -38,6 +39,14 @@ export function heatingSampleFromReadings(
     heatingOn: heating === "1",
     temperatureC: Number(match[0].replace(",", "."))
   };
+}
+
+/* True when Povolit nabíjení v noci is on. The Miniserver sends 1 or 0. */
+export function nightChargingAllowed(body: string): boolean {
+  const value = parseLoxoneValue(body);
+  if (value !== "0" && value !== "1")
+    throw new Error("Night charging switch is not on or off");
+  return value === "1";
 }
 
 /* Read one number from a Miniserver body. A comma is a decimal mark. */
