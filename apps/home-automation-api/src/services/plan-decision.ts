@@ -5,8 +5,9 @@ The battery command stays on the plan the charge rule already produced.
 */
 
 import {
+  clockOnlyChange,
   futureChange,
-  mergeDecision,
+  settleDecision,
   type DecisionKind,
   type DecisionSegment,
   type PlanChange,
@@ -150,8 +151,15 @@ export function issueTodayDecision(input: {
   inputs: PlanInputs;
 }): EnergyPlan {
   const stored = input.archive.listDayDecisions(input.date);
-  const merged = mergeDecision(stored, segmentsFromPlan(input.plan), input.now);
   const previous = input.archive.readPlanInputs(input.date);
+  const holdOpenCar = previous ? clockOnlyChange(previous, input.inputs) : false;
+  const merged = settleDecision(
+    stored,
+    segmentsFromPlan(input.plan),
+    input.now,
+    input.archive.listPlanChanges(input.date),
+    holdOpenCar
+  );
   const line = futureChange(
     previous ? stored : [],
     merged,

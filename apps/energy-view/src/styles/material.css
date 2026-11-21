@@ -1,56 +1,99 @@
 :root {
-  --md-primary: #6750a4;
-  --md-on-primary: #ffffff;
+  --md-sys-color-primary: #006b5a;
+  --md-sys-color-on-primary: #ffffff;
+  --md-sys-color-primary-container: #9ff2dc;
+  --md-sys-color-on-primary-container: #00201a;
+  --md-sys-color-secondary: #4b635c;
+  --md-sys-color-on-secondary: #ffffff;
+  --md-sys-color-secondary-container: #cde8df;
+  --md-sys-color-on-secondary-container: #06201a;
+  --md-sys-color-surface: #f4fbf7;
+  --md-sys-color-surface-container-low: #eef6f1;
+  --md-sys-color-surface-container: #e8f0eb;
+  --md-sys-color-surface-container-high: #e3ebe6;
+  --md-sys-color-surface-container-highest: #dde5e0;
+  --md-sys-color-on-surface: #161d1a;
+  --md-sys-color-on-surface-variant: #3f4945;
+  --md-sys-color-outline: #6f7975;
+  --md-sys-color-outline-variant: #bec9c4;
+  --md-sys-color-error: #ba1a1a;
+  --md-sys-color-on-error: #ffffff;
+  --md-sys-color-shadow: #000000;
   --md-surface: #fffbfe;
-  --md-surface-container: #f3edf7;
-  --md-on-surface: #1d1b20;
-  --md-on-surface-variant: #49454f;
-  --md-outline: #cac4d0;
-  --md-error: #b3261e;
   --skeleton: #ebe4f1;
   --skeleton-shine: #f8f4fb;
-  --shadow: 0 1px 2px rgb(0 0 0 / 12%), 0 1px 3px 1px rgb(0 0 0 / 8%);
-  color: var(--md-on-surface);
-  background: var(--md-surface);
+  color: var(--md-sys-color-on-surface);
+  background: var(--md-sys-color-surface);
   font-family: Roboto, "Segoe UI", sans-serif;
   line-height: 1.5;
 }
 
 * { box-sizing: border-box; }
 
+[hidden] { display: none !important; }
+
 body {
   margin: 0;
-  background: var(--md-surface-container);
+  background: var(--md-sys-color-surface-container);
 }
 
 header {
+  background: var(--md-sys-color-surface-container-low);
+  color: var(--md-sys-color-on-surface);
+}
+
+.page-column {
+  width: min(1100px, 100%);
+  margin: 0 auto;
+  padding-left: 16px;
+  padding-right: 16px;
+}
+
+.header-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  height: 64px;
-  padding: 0 24px;
-  background: var(--md-primary);
-  color: var(--md-on-primary);
+  gap: 12px 16px;
+  min-height: 64px;
+  padding-top: 8px;
+  padding-bottom: 8px;
 }
 
 header h1 {
   margin: 0;
   font-size: 22px;
   font-weight: 500;
+  color: var(--md-sys-color-primary);
 }
 
+.day-nav,
+.conn-slot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.conn-slot {
+  position: relative;
+  margin-left: auto;
+}
+
+#day { width: 168px; }
+
 main {
-  max-width: 1100px;
-  margin: 0 auto;
-  padding: 24px 16px 48px;
+  padding-top: 24px;
+  padding-bottom: 48px;
   display: grid;
   gap: 16px;
 }
 
-.card {
-  background: var(--md-surface);
-  border-radius: 16px;
-  box-shadow: var(--shadow);
+md-elevated-card.card {
+  display: flex;
+  flex-direction: column;
   padding: 20px 24px;
+  --md-elevated-card-container-shape: 16px;
+  --md-elevated-card-container-color: var(--md-sys-color-surface);
 }
 
 h2 {
@@ -64,47 +107,33 @@ h2.follows {
   margin-top: 28px;
 }
 
-form, .row {
+#connection-card form,
+.row {
   display: flex;
   flex-wrap: wrap;
   gap: 12px;
   align-items: end;
 }
 
-label {
-  display: grid;
-  gap: 4px;
-  font-size: 12px;
-  color: var(--md-on-surface-variant);
+#connection-card md-outlined-text-field {
+  width: min(100%, 280px);
 }
 
-input {
-  height: 40px;
-  padding: 0 12px;
-  border: 1px solid var(--md-outline);
-  border-radius: 8px;
-  background: var(--md-surface);
-  color: var(--md-on-surface);
-  font: inherit;
-  font-size: 14px;
+#connection-card #api-base {
+  width: min(100%, 360px);
 }
 
-button {
-  height: 40px;
-  padding: 0 20px;
-  border: 0;
-  border-radius: 20px;
-  background: var(--md-primary);
-  color: var(--md-on-primary);
-  font: inherit;
-  font-weight: 500;
-  cursor: pointer;
+#connection-menu form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  box-sizing: border-box;
+  width: min(320px, 80vw);
+  padding: 8px 12px 12px;
 }
 
-button.quiet {
-  background: transparent;
-  color: var(--md-primary);
-  border: 1px solid var(--md-outline);
+#connection-menu md-outlined-text-field {
+  width: 100%;
 }
 
 .stats {
@@ -114,23 +143,27 @@ button.quiet {
 }
 
 #recalculate-plan {
-  display: inline-flex;
-  align-items: center;
+  align-self: flex-start;
+  width: fit-content;
   margin-top: 16px;
+  --md-filled-button-container-height: 32px;
+  --md-filled-button-label-text-size: 13px;
+  --md-filled-button-leading-space: 12px;
+  --md-filled-button-trailing-space: 12px;
 }
 
 .stat {
   min-width: 0;
   padding: 12px 16px;
   border-radius: 12px;
-  background: var(--md-surface-container);
+  background: var(--md-sys-color-surface-container);
   overflow-wrap: anywhere;
 }
 
 .stat span {
   display: block;
   font-size: 12px;
-  color: var(--md-on-surface-variant);
+  color: var(--md-sys-color-on-surface-variant);
 }
 
 .stat strong {
@@ -141,31 +174,48 @@ button.quiet {
   font-weight: 500;
 }
 
+.stat em {
+  display: block;
+  margin-top: 4px;
+  font-style: normal;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+#day-checks {
+  margin-top: 16px;
+}
+
 .stat:has(strong.pending),
 .is-loading .stat {
-  background-color: var(--skeleton);
-  background-image: linear-gradient(100deg, var(--skeleton) 35%, var(--skeleton-shine) 50%, var(--skeleton) 65%);
+  background-color: var(--md-sys-color-surface-container-high);
+  background-image: linear-gradient(100deg, var(--md-sys-color-surface-container-high) 35%, var(--md-sys-color-surface-container-lowest, #fff) 50%, var(--md-sys-color-surface-container-high) 65%);
   background-size: 220% 100%;
   animation: placeholder-shimmer 2.4s ease-in-out infinite;
 }
 
 .stat:has(strong.pending) span,
 .stat:has(strong.pending) strong,
+.stat:has(strong.pending) em,
 .is-loading .stat span,
-.is-loading .stat strong {
+.is-loading .stat strong,
+.is-loading .stat em {
   visibility: hidden;
 }
 
 .note, .status {
   margin: 8px 0 0;
-  color: var(--md-on-surface-variant);
+  color: var(--md-sys-color-on-surface-variant);
   font-size: 14px;
 }
 
 #day-label:empty,
+#day-rate:empty,
 #forecast-deviation:empty,
 #plan-line:empty,
 .is-loading #day-label,
+.is-loading #day-rate,
 .is-loading #plan-line,
 .is-loading #forecast-deviation {
   color: transparent;
@@ -177,6 +227,7 @@ button.quiet {
 }
 
 #day-label:empty,
+#day-rate:empty,
 #forecast-deviation:empty,
 #plan-line:empty {
   min-height: 1.5em;
@@ -186,7 +237,33 @@ button.quiet {
   min-height: 1.5em;
 }
 
-.status.error { color: var(--md-error); }
+.status.error { color: var(--md-sys-color-error); }
+
+.pull-banner {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  font-size: 14px;
+}
+
+.pull-banner.fresh {
+  background: var(--md-sys-color-primary-container);
+  color: var(--md-sys-color-on-primary-container);
+}
+
+.pull-banner.stale {
+  background: #ffefd6;
+  color: #6b3f00;
+}
+
+.pull-banner.obsolete {
+  background: #ffdad6;
+  color: #93000a;
+}
+
+#status:empty {
+  display: none;
+}
 
 .chart-wrap,
 .day-row-chart {
@@ -263,20 +340,93 @@ main:not(.is-loading) .chart-wrap:has(canvas.drawn)::before {
   width: 100%;
 }
 
-.plan-changes {
-  list-style: none;
-  margin: 8px 0 0;
-  padding: 0;
+.plan-history {
+  margin-top: 12px;
 }
 
-.plan-changes button {
-  background: none;
+.plan-changes {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.plan-change {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr);
+  gap: 8px 12px;
+  width: 100%;
+  height: auto;
+  background: var(--md-sys-color-surface-container-low);
   border: 0;
+  border-radius: 12px;
   color: inherit;
   cursor: pointer;
   font: inherit;
-  padding: 4px 0;
+  padding: 12px;
   text-align: left;
+  align-items: start;
+}
+
+.plan-change:hover {
+  background: var(--md-sys-color-surface-container);
+}
+
+.plan-change time {
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+  padding-top: 2px;
+}
+
+.plan-change-body {
+  display: grid;
+  gap: 6px;
+}
+
+.plan-field {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+}
+
+.plan-field-label {
+  padding-top: 2px;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+.plan-trigger {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  min-height: 24px;
+  padding: 0 10px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 500;
+  background: var(--md-sys-color-surface-container-highest);
+  color: var(--md-sys-color-on-surface);
+}
+
+.plan-trigger[data-kind="sun"] { background: #f6e7c1; color: #5c4300; }
+.plan-trigger[data-kind="battery"] { background: #d7efc8; color: #1d4a12; }
+.plan-trigger[data-kind="tank"] { background: #f3ddc4; color: #5c3a00; }
+.plan-trigger[data-kind="car"] { background: #cdecea; color: #004f4f; }
+.plan-trigger[data-kind="prices"] { background: #c8efe4; color: #004d40; }
+.plan-trigger[data-kind="charge"] { background: #e4e0ff; color: #332b80; }
+.plan-trigger[data-kind="house"] { background: #d6e4f5; color: #1d3f66; }
+.plan-trigger[data-kind="clock"] { background: #e3ebe6; color: #3f4945; }
+.plan-trigger[data-kind="season"] { background: #f3d9e4; color: #6b2944; }
+
+.plan-results {
+  display: grid;
+  gap: 2px;
+  padding-top: 2px;
 }
 
 .plan-snapshot {
@@ -299,6 +449,23 @@ main:not(.is-loading) .chart-wrap:has(canvas.drawn)::before {
   width: min(960px, 92vw);
 }
 
+.plan-snapshot-sheet > button {
+  height: 40px;
+  margin: 0 0 8px;
+  padding: 0 16px;
+  border: 1px solid var(--md-sys-color-outline);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--md-sys-color-primary);
+  font: inherit;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.plan-snapshot-sheet > button:hover {
+  background: color-mix(in srgb, var(--md-sys-color-primary) 8%, transparent);
+}
+
 @keyframes placeholder-shimmer {
   0% { background-position: 100% 0; }
   100% { background-position: -100% 0; }
@@ -308,9 +475,11 @@ main:not(.is-loading) .chart-wrap:has(canvas.drawn)::before {
   .stat:has(strong.pending),
   .is-loading .stat,
   #day-label:empty,
+  #day-rate:empty,
   #forecast-deviation:empty,
   #plan-line:empty,
   .is-loading #day-label,
+  .is-loading #day-rate,
   .is-loading #plan-line,
   .is-loading #forecast-deviation,
   .chart-wrap::before,
@@ -320,6 +489,13 @@ main:not(.is-loading) .chart-wrap:has(canvas.drawn)::before {
 }
 
 @media (max-width: 720px) {
+  .conn-slot { margin-left: 0; }
+
+  .plan-change,
+  .plan-field {
+    grid-template-columns: 1fr;
+  }
+
   #day-label:empty {
     min-height: 3em;
   }
@@ -327,5 +503,9 @@ main:not(.is-loading) .chart-wrap:has(canvas.drawn)::before {
   #forecast-deviation:empty,
   #plan-line:empty {
     min-height: 4.5em;
+  }
+
+  #day-rate:empty {
+    min-height: 1.5em;
   }
 }

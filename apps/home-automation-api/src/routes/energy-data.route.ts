@@ -7,16 +7,19 @@ import { join } from "node:path";
 import { Type } from "@fastify/type-provider-typebox";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { formatErrorResponse } from "../lib/plain-text-response.js";
+import { czkPerEurOn, fetchCnbEurRates, type CnbResponse } from "../services/cnb-eur.js";
 import { scoreDay } from "../services/day-score.js";
 import { alignEnergyDay, tankTemperatureClocks } from "../services/energy-series.js";
 import type { ForecastClientDeps } from "../services/forecast-solar-client.js";
 import type { HouseArchive } from "../services/house-archive.js";
 import { pragueTimestamp } from "../services/house-collector.js";
+import { monthSoFar, type MonthSoFar } from "../services/month-so-far.js";
 import { fetchMorningLowCloud } from "../services/open-meteo-cloud-client.js";
 import type { PredictionStore } from "../services/prediction-store.js";
 import { aggregatePvPrediction } from "../services/pv-production-aggregator.js";
 import { forecastDeviation } from "../services/pv-forecast-learning.js";
 import { seasonOf } from "../services/seasonal-profile.js";
+import { addDays } from "../services/sun-clock.js";
 import { samplesFromWattsonicDay } from "../services/wattsonic-day.js";
 
 const HOUSE = {
@@ -70,6 +73,46 @@ function rejectUnauthorized(apiKey: string, request: FastifyRequest, reply: Fast
 function minutes(clock: string): number {
   const [hour, minute] = clock.split(":");
   return Number(hour) * 60 + Number(minute);
+}
+
+/* Middle price. An even count uses the mean of the two middle prices. */
+function median(values: number[]): number {
+  const sorted = [...values].sort((left, right) => left - right);
+  const middle = Math.floor(sorted.length / 2);
+  if (sorted.length % 2 === 1)
+    return sorted[middle];
+  return (sorted[middle - 1] + sorted[middle]) / 2;
+}
+
+/* Read ČNB text through the shared fetch, which only types a JSON body. */
+async function readCnb(url: string, fetchImpl: ForecastClientDeps["fetchImpl"]): Promise<CnbResponse> {
+  const response = await fetchImpl(url) as { ok: boolean; status: number; text?: () => Promise<string> };
+  return {
+    ok: response.ok,
+    status: response.status,
+    text: () => response.text?.() ?? Promise.resolve("")
+  };
+}
+
+/* This month's purchases and sales, and the sun already measured today. */
+async function readMonthOverview(deps: EnergyDataDeps, today: string): Promise<MonthSoFar> {
+  const empty = { importCzk: null, exportCzk: null, productionKwh: null };
+  if (!deps.archive)
+    return empty;
+  const archive = deps.archive;
+  const start = `${today.slice(0, 7)}-01`;
+  let rates: Awaited<ReturnType<typeof fetchCnbEurRates>> = [];
+  try {
+    rates = await fetchCnbEurRates(addDays(start, -7), today, (url) => readCnb(url, deps.forecastClientDeps.fetchImpl));
+  } catch {
+    rates = [];
+  }
+  return monthSoFar({
+    today,
+    readDay: (date) => archive.listPowerSamples(date),
+    readPrices: (date) => archive.listSpotPrices(date),
+    czkPerEur: (date) => czkPerEurOn(date, rates)
+  });
 }
 
 /* Register the series and the live driving-state routes. */
@@ -186,6 +229,8 @@ export function registerEnergyDataRoutes(app: FastifyInstance, deps: EnergyDataD
         return at >= startMinutes && at < endMinutes;
       });
       const latest = deps.archive?.latestHeating() ?? null;
+      const latestPower = deps.archive?.latestPowerSampleBefore(addDays(date, 1)) ?? null;
+      const month = await readMonthOverview(deps, date);
 
       reply.status(200).send({
         todayKwh,
@@ -195,7 +240,12 @@ export function registerEnergyDataRoutes(app: FastifyInstance, deps: EnergyDataD
         tankTemperatureC: latest?.temperatureC ?? null,
         heatingSampleAt: latest?.at ?? null,
         priceEurPerMwh: price?.eurPerMwh ?? null,
-        priceInterval: price?.periodInterval ?? null
+        priceInterval: price?.periodInterval ?? null,
+        medianEurPerMwh: prices.length === 0 ? null : median(prices.map((item) => item.eurPerMwh)),
+        socPercent: latestPower?.socPercent ?? null,
+        monthImportCzk: month.importCzk,
+        monthExportCzk: month.exportCzk,
+        todayProductionKwh: month.productionKwh
       });
     }
   });

@@ -26,6 +26,7 @@ import { addDays, daylightDate, sunClocks } from "../services/sun-clock.js";
 import type { FetchImpl } from "../services/forecast-solar-client.js";
 import type { HouseArchive } from "../services/house-archive.js";
 import { pragueDate, pragueTimestamp } from "../services/house-collector.js";
+import { createPlanPullMemory, describePlanPull } from "../services/plan-pull.js";
 import { fetchMorningLowCloud } from "../services/open-meteo-cloud-client.js";
 import { cloudBand, expectedPvKwh, seasonOf } from "../services/seasonal-profile.js";
 
@@ -193,6 +194,15 @@ function aboveFloorKwh(socPercent: number | null): number | null {
   return Math.max(0, socPercent - FLOOR_PERCENT) / 100 * BATTERY_KWH;
 }
 
+/* A Miniserver pull puts the key in the query. The page sends it as a header. */
+function isMiniserverPlanPull(request: FastifyRequest): boolean {
+  const path = request.url.split("?")[0];
+  if (path !== "/api/energy/plan")
+    return false;
+  const header = request.headers["x-api-key"];
+  return typeof header !== "string" || header.length === 0;
+}
+
 /* Record how long the plan pull took. The query holds the key, so it stays out of the log. */
 function registerPlanPollLog(app: FastifyInstance): void {
   app.addHook("onResponse", async (request, reply) => {
@@ -205,7 +215,23 @@ function registerPlanPollLog(app: FastifyInstance): void {
 
 /* Register the plan Loxone pulls once a day. */
 export function registerEnergyPlanRoute(app: FastifyInstance, deps: EnergyPlanDeps): void {
+  const pulls = createPlanPullMemory();
   registerPlanPollLog(app);
+  app.route({
+    method: "GET",
+    url: "/api/energy/plan-pull",
+    schema: {
+      querystring: Type.Object({
+        apiKey: Type.Optional(Type.String())
+      }, { additionalProperties: false })
+    },
+    handler: async (request, reply) => {
+      const query = request.query as { apiKey?: string };
+      if (rejectUnauthorized(deps.apiKey, request, reply, query.apiKey))
+        return;
+      reply.status(200).send(describePlanPull(pulls.lastSuccessAt, deps.clock?.() ?? new Date()));
+    }
+  });
   app.route({
     method: "GET",
     url: "/api/energy/plan-log",
@@ -388,6 +414,8 @@ export function registerEnergyPlanRoute(app: FastifyInstance, deps: EnergyPlanDe
         daylightHouseKwh: load.daylightKwh,
         season
       });
+      if (isMiniserverPlanPull(request))
+        pulls.noteSuccess(deps.clock?.() ?? new Date());
       const text = formatEnergyPlan(issued);
       const cover = sunCover ? `sunCoversFrom=${sunCover.from}\nsunCoversTo=${sunCover.to}\n` : "";
       const stored = archive.listDayDecisions(date);

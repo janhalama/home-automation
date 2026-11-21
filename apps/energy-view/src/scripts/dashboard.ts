@@ -2,10 +2,18 @@
 Loads one day and the live forecast from the energy API and draws them.
 */
 
+import "@material/web/button/filled-button.js";
+import "@material/web/button/outlined-button.js";
+import "@material/web/labs/card/elevated-card.js";
+import "@material/web/menu/menu.js";
+import "@material/web/textfield/outlined-text-field.js";
 import { renderBalanceHistory, type BalancePoint } from "./balance-chart.ts";
 import { batteryChargeSentence } from "./battery-plan-series.ts";
+import { renderPlanPull, type PlanPull } from "./plan-pull-banner.ts";
 import { renderDayRows } from "./day-rows.ts";
-import { parseChangeList, parseSegmentList, pragueClock, renderChangeList, renderPlanBar, type ChangeLine, type StoredSegment } from "./plan-bar.ts";
+import { dayCheckCards, dayMoneyCards, dayRateLine, type DayCheck } from "./day-cards.ts";
+import { liveGroups, type LiveCard, type LiveSnapshot } from "./live-cards.ts";
+import { parseChangeList, parseSegmentList, pragueClock, renderChangeList, renderPlanBar, toggleChangeList, type ChangeLine, type StoredSegment } from "./plan-bar.ts";
 import { renderReserveHistory, type ReservePoint } from "./reserve-chart.ts";
 
 type EnergyPoint = {
@@ -19,17 +27,7 @@ type EnergyPoint = {
   tankTemperatureC?: number | null;
 };
 
-type DayScore = {
-  medianEurPerMwh: number;
-  importWeightedEurPerMwh: number | null;
-  exportWeightedEurPerMwh: number | null;
-  boughtCheaply: boolean | null;
-  soldExpensively: boolean | null;
-  minutesBelowFloor: number;
-  lowestSocPercent: number;
-  exportWasWise: boolean;
-  tankPeriodsOnCheapHalf: number | null;
-};
+type DayScore = DayCheck;
 
 type ForecastDeviation = {
   count: number;
@@ -47,15 +45,9 @@ type SeriesResponse = {
   error?: string;
 };
 
-type LiveResponse = {
-  todayKwh: number | null;
-  tomorrowKwh: number | null;
+type LiveResponse = LiveSnapshot & {
   forecastError: string | null;
-  heatingOn: boolean | null;
-  tankTemperatureC: number | null;
   heatingSampleAt: string | null;
-  priceEurPerMwh: number | null;
-  priceInterval: string | null;
   error?: string;
 };
 
@@ -81,6 +73,36 @@ type DayPlan = {
   planChanges: ChangeLine[];
 };
 const STORAGE_KEY = "energy-view-connection";
+
+type ValueField = HTMLElement & { value: string };
+type OpenMenu = HTMLElement & { open: boolean };
+
+/* Read a text field, whether it is a native input or a Material field. */
+function fieldValue(field: Element | null): string {
+  if (!field || !("value" in field))
+    return "";
+  return String((field as ValueField).value);
+}
+
+/* Put the connection fields on the page until a key is saved, then into the header menu. */
+function placeConnection(): void {
+  const card = document.querySelector("#connection-card");
+  const menu = document.querySelector("#connection-menu");
+  const form = document.querySelector("#connection");
+  const opener = document.querySelector("#connection-open");
+  const apiKeyField = document.querySelector("#api-key");
+  if (!(card instanceof HTMLElement) || !(menu instanceof HTMLElement) || !(form instanceof HTMLElement) || !(opener instanceof HTMLElement))
+    return;
+  const saved = fieldValue(apiKeyField).trim() !== "";
+  if (saved)
+    menu.append(form);
+  else
+    card.append(form);
+  card.hidden = saved;
+  opener.hidden = !saved;
+  if (!saved)
+    (menu as OpenMenu).open = false;
+}
 
 /* A public build setting. The page refuses to start without it. */
 function publicEnv(name: string): string {
@@ -247,81 +269,28 @@ function renderPlanLine(plan: DayPlan | null, opening: DayPlan | null, recordedU
     sale
   ].join(". ") + ".";
 }
-/* One number card. */
-function stat(label: string, value: string): string {
-  return `<div class="stat"><span>${label}</span><strong>${value}</strong></div>`;
+/* One number card. The detail line holds the evidence for that number. */
+function stat(card: LiveCard): string {
+  const detail = card.detail ? `<em>${card.detail}</em>` : "";
+  return `<div class="stat"><span>${card.label}</span><strong>${card.value}</strong>${detail}</div>`;
 }
 
-/* Yes, no, or no energy moved that way. */
-function answer(value: boolean | null): string {
-  if (value === null)
-    return "no energy moved";
-  return value ? "yes" : "no";
+/* Write one group of cards into its grid. */
+function fillStats(selector: string, cards: LiveCard[]): void {
+  const root = document.querySelector(selector);
+  if (root)
+    root.innerHTML = cards.map((card) => stat(card)).join("");
 }
 
-/* Kč with a leading minus when the day cost money. */
-function crowns(value: number): string {
-  const text = `${Math.abs(value).toFixed(2)} Kč`;
-  return value < 0 ? `−${text}` : text;
-}
-
-/* The selected day's rate, import, export, and balance. */
-function moneyStats(day: BalancePoint | null): string[] {
-  const rate = day?.czkPerEur == null ? "not yet" : `${day.czkPerEur.toFixed(3)} Kč`;
-  if (day?.importCzk == null || day.exportCzk == null || day.balanceCzk == null)
-    return [
-      stat("EUR rate", rate),
-      stat("Grid purchase", "not yet"),
-      stat("Export", "not yet"),
-      stat("Sun saved", "not yet"),
-      stat("Day balance", "not yet")
-    ];
-  return [
-    stat("EUR rate", rate),
-    stat("Grid purchase", crowns(day.importCzk)),
-    stat("Export", crowns(day.exportCzk)),
-    stat("Sun saved", crowns(day.sunCzk ?? 0)),
-    stat("Day balance", crowns(day.balanceCzk))
-  ];
-}
-
-/* Format one EUR/MWh figure. */
-function priceLine(value: number | null): string {
-  if (value === null)
-    return "none";
-  return `${value.toFixed(0)} EUR/MWh`;
-}
-
-/* Fill the money, the four scores, and the forecast deviation. */
+/* Fill the day's money, the plan checks, and the forecast deviation. */
 function renderScores(series: SeriesResponse, balanceDay: BalancePoint | null): void {
-  const root = document.querySelector("#scores");
+  const rate = document.querySelector("#day-rate");
   const deviation = document.querySelector("#forecast-deviation");
-  if (!root || !deviation)
+  if (!rate || !deviation)
     return;
-  const score = series.score;
-  const money = moneyStats(balanceDay);
-  if (!score) {
-    root.innerHTML = [
-      ...money,
-      stat("Day score", series.missing.length > 0 ? "not yet" : "morning cloud was not read")
-    ].join("");
-  } else {
-    const tank = score.tankPeriodsOnCheapHalf === null
-      ? "not started"
-      : String(score.tankPeriodsOnCheapHalf);
-    root.innerHTML = [
-      ...money,
-      stat("Bought cheaply", answer(score.boughtCheaply)),
-      stat("Sold expensively", answer(score.soldExpensively)),
-      stat("Battery stayed safe", score.minutesBelowFloor === 0 ? "yes" : "no"),
-      stat("Morning export was wise", score.exportWasWise ? "yes" : "no"),
-      stat("Import price", priceLine(score.importWeightedEurPerMwh)),
-      stat("Day median", priceLine(score.medianEurPerMwh)),
-      stat("Minutes under 20%", score.minutesBelowFloor.toFixed(0)),
-      stat("Lowest charge", `${score.lowestSocPercent.toFixed(0)}%`),
-      stat("Tank on the cheap half", tank)
-    ].join("");
-  }
+  fillStats("#day-money", dayMoneyCards(balanceDay));
+  rate.textContent = dayRateLine(balanceDay);
+  fillStats("#day-checks", dayCheckCards(series.score, series.missing));
   if (!series.deviation) {
     deviation.textContent = "Forecast deviation: no pair has been recorded.";
     return;
@@ -332,21 +301,12 @@ function renderScores(series: SeriesResponse, balanceDay: BalancePoint | null): 
   deviation.textContent = `Forecast deviation: signed mean ${series.deviation.signedMeanKwh.toFixed(1)} kWh, mean absolute ${series.deviation.absoluteMeanKwh.toFixed(1)} kWh over ${series.deviation.count} day(s). ${bands}`;
 }
 
-/* Fill the live driving-state cards. */
+/* Fill the live plant, sun, and month cards. */
 function renderLive(live: LiveResponse): void {
-  const root = document.querySelector("#live");
-  if (!root)
-    return;
-  const heating = live.heatingOn === null ? "unknown" : live.heatingOn ? "on" : "off";
-  const temperature = live.tankTemperatureC === null ? "unknown" : `${live.tankTemperatureC.toFixed(1)} °C`;
-  const price = live.priceEurPerMwh === null ? "unknown" : `${live.priceEurPerMwh.toFixed(1)} EUR/MWh`;
-  root.innerHTML = [
-    stat("FVE today", live.todayKwh === null ? "unknown" : `${live.todayKwh.toFixed(1)} kWh`),
-    stat("FVE tomorrow", live.tomorrowKwh === null ? "unknown" : `${live.tomorrowKwh.toFixed(1)} kWh`),
-    stat("Heater now", heating),
-    stat("Tank", temperature),
-    stat("Price now", price)
-  ].join("");
+  const groups = liveGroups(live);
+  fillStats("#live-now", groups.now);
+  fillStats("#live-sun", groups.sun);
+  fillStats("#live-month", groups.month);
 }
 
 /* The car's charging power for the day. A failure leaves that row empty. */
@@ -372,18 +332,34 @@ function setPageLoading(isLoading: boolean): void {
   main.classList.toggle("is-loading", isLoading);
   main.setAttribute("aria-busy", isLoading ? "true" : "false");
   const button = document.querySelector("#recalculate-plan");
-  if (button instanceof HTMLButtonElement)
-    button.disabled = isLoading;
+  if (button && "disabled" in button)
+    (button as HTMLButtonElement).disabled = isLoading;
+}
+
+/* Ask how old the Miniserver's last plan pull is. A missing route leaves the banner hidden. */
+async function refreshPlanPull(apiBase: string, apiKey: string): Promise<void> {
+  const banner = document.querySelector("#loxone-pull");
+  if (!(banner instanceof HTMLElement))
+    return;
+  try {
+    renderPlanPull(banner, await loadJson<PlanPull>(apiBase, apiKey, "/api/energy/plan-pull"));
+  } catch {
+    banner.hidden = true;
+  }
 }
 
 /* Load the live state and the selected day. */
 async function loadDay(event?: Event): Promise<void> {
   event?.preventDefault();
   const status = document.querySelector("#status");
-  const apiBase = (document.querySelector("#api-base") as HTMLInputElement).value.replace(/\/$/, "");
-  const apiKey = (document.querySelector("#api-key") as HTMLInputElement).value;
-  const day = (document.querySelector("#day") as HTMLInputElement).value;
+  const apiBase = fieldValue(document.querySelector("#api-base")).replace(/\/$/, "");
+  const apiKey = fieldValue(document.querySelector("#api-key"));
+  const day = fieldValue(document.querySelector("#day"));
   saveSettings(apiBase, apiKey);
+  placeConnection();
+  const menu = document.querySelector("#connection-menu");
+  if (menu)
+    (menu as OpenMenu).open = false;
   setPageLoading(true);
   if (status) {
     status.className = "status";
@@ -414,6 +390,7 @@ async function loadDay(event?: Event): Promise<void> {
     if (balanceCanvas instanceof HTMLCanvasElement)
       renderBalanceHistory(balanceCanvas, balance.days);
     renderLive(live);
+    void refreshPlanPull(apiBase, apiKey);
     renderScores(series, balance.days.find((item) => item.date === day) ?? null);
     const hasReality = series.points.some((point) => point.pvKw !== null || point.meterKw !== null);
     renderDayLabel(day, hasReality);
@@ -461,12 +438,13 @@ async function loadDay(event?: Event): Promise<void> {
 }
 
 const settings = readSettings();
-const apiBase = document.querySelector("#api-base") as HTMLInputElement;
-const apiKey = document.querySelector("#api-key") as HTMLInputElement;
-const day = document.querySelector("#day") as HTMLInputElement;
+const apiBase = document.querySelector("#api-base") as ValueField;
+const apiKey = document.querySelector("#api-key") as ValueField;
+const day = document.querySelector("#day") as ValueField;
 apiBase.value = settings.apiBase;
 apiKey.value = settings.apiKey;
 day.value = pragueToday();
+placeConnection();
 document.querySelector("#recalculate-plan")?.addEventListener("click", () => {
   const note = document.querySelector("#plan-note");
   if (note)
@@ -474,10 +452,21 @@ document.querySelector("#recalculate-plan")?.addEventListener("click", () => {
   void loadDay().then(() => {
     const status = document.querySelector("#status");
     if (note && !status?.classList.contains("error"))
-      note.textContent = "Plan refreshed. The Miniserver reads it within 15 minutes.";
+      note.textContent = "Plan refreshed. The Miniserver reads it within 10 minutes.";
   });
 });
+document.querySelector("#plan-changes-open")?.addEventListener("click", () => {
+  const list = document.querySelector("#plan-changes");
+  const opener = document.querySelector("#plan-changes-open");
+  if (list instanceof HTMLElement && opener instanceof HTMLElement)
+    toggleChangeList(list, opener);
+});
 document.querySelector("#connection")?.addEventListener("submit", (event) => void loadDay(event));
+document.querySelector("#connection-open")?.addEventListener("click", () => {
+  const menu = document.querySelector("#connection-menu");
+  if (menu)
+    (menu as OpenMenu).open = !(menu as OpenMenu).open;
+});
 day.addEventListener("change", () => void loadDay());
 document.querySelector("#prev-day")?.addEventListener("click", () => {
   day.value = shiftDate(day.value, -1);
@@ -493,3 +482,9 @@ document.querySelector("#next-day")?.addEventListener("click", () => {
 });
 if (settings.apiKey)
   void loadDay();
+setInterval(() => {
+  const apiBase = fieldValue(document.querySelector("#api-base")).replace(/\/$/, "");
+  const apiKey = fieldValue(document.querySelector("#api-key"));
+  if (apiKey)
+    void refreshPlanPull(apiBase, apiKey);
+}, 30_000);

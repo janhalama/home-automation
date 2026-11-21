@@ -109,16 +109,49 @@ function clock(total: number): string {
   return `${hour}:${minute}`;
 }
 
-/* Keep started hours, take the proposal for the rest, and mark a wait where the tank or car is on. */
-export function mergeDecision(stored: DecisionSegment[], proposed: DecisionSegment[], now: string): DecisionSegment[] {
-  const proposedLive = proposed.filter((segment) => segment.kind !== "battery-wait");
-  const kept = stored.filter((segment) => segment.kind !== "battery-wait" && hasStarted(segment, now));
+/* Same kind, hours, power, and mode. */
+function sameSegment(left: DecisionSegment, right: DecisionSegment): boolean {
+  return left.kind === right.kind
+    && left.from === right.from
+    && left.to === right.to
+    && left.kw === right.kw
+    && left.mode === right.mode;
+}
+
+/* True when the inner window sits inside the outer one, edges included. */
+function contains(outer: DecisionSegment, inner: DecisionSegment): boolean {
+  return minutes(inner.from) >= minutes(outer.from) && minutes(inner.to) <= minutes(outer.to);
+}
+
+/* The car windows to keep. A shorter window inside one already issued is the same plan sliding forward, so the issued hours stay. A clock poll that finds no slot leaves the issued window in place. */
+function chosenCars(stored: DecisionSegment[], proposed: DecisionSegment[], now: string, holdOpenCar: boolean): DecisionSegment[] {
+  const storedCars = stored.filter((segment) => segment.kind === "car");
+  const proposedCars = proposed.filter((segment) => segment.kind === "car");
+  const started = storedCars.filter((segment) => hasStarted(segment, now));
+  const waiting = storedCars.filter((segment) => !hasStarted(segment, now) && minutes(segment.to) > minutes(now));
+  const outside = proposedCars.filter((segment) => !storedCars.some((other) => sameSegment(other, segment) || contains(other, segment)));
+  if (outside.length > 0)
+    return [...started, ...outside];
+  const slide = proposedCars.length > 0;
+  const open = waiting.filter(() => holdOpenCar || slide);
+  const covered = [...started, ...open];
+  const fresh = proposedCars.filter((segment) =>
+    hasStarted(segment, now)
+    && !covered.some((other) => sameSegment(other, segment) || contains(other, segment))
+  );
+  return [...covered, ...fresh];
+}
+
+/* Keep started hours, take the proposal for the rest, and mark a wait where the tank or car is on. holdOpenCar keeps a car the clock has not reached when this poll found no slot. */
+export function mergeDecision(stored: DecisionSegment[], proposed: DecisionSegment[], now: string, holdOpenCar = false): DecisionSegment[] {
+  const proposedLive = proposed.filter((segment) => segment.kind !== "battery-wait" && segment.kind !== "car");
+  const kept = stored.filter((segment) => segment.kind !== "battery-wait" && segment.kind !== "car" && hasStarted(segment, now));
   const startedProposed = proposedLive.filter((segment) =>
     hasStarted(segment, now)
     && !kept.some((other) => other.kind === segment.kind && other.from === segment.from)
   );
   const ahead = proposedLive.filter((segment) => !hasStarted(segment, now));
-  const merged = [...kept, ...startedProposed, ...ahead];
+  const merged = [...kept, ...startedProposed, ...ahead, ...chosenCars(stored, proposed, now, holdOpenCar)];
   const buys = merged.filter((segment) => segment.kind === "battery-buy");
   const waits = merged
     .filter((segment) => segment.kind === "tank" || segment.kind === "car")
@@ -178,6 +211,62 @@ function triggerName(previous: PlanInputs, next: PlanInputs): string | null {
   if (previous.clock !== next.clock)
     return "The clock";
   return null;
+}
+
+/* True when the only input that moved is the minute. */
+export function clockOnlyChange(previous: PlanInputs, next: PlanInputs): boolean {
+  return triggerName(previous, next) === "The clock";
+}
+
+/* Drop waiting cars a later replan replaced. A car that had already started stays on the day. */
+function forgetReplanned(slid: DecisionSegment[], change: PlanChange, next: DecisionSegment[]): void {
+  const at = minutes(change.at);
+  const cancel = change.trigger === "Car no longer needs a charge" || change.trigger === "Night charging turned off";
+  for (let index = slid.length - 1; index >= 0; index -= 1) {
+    const car = slid[index];
+    const waiting = minutes(car.from) >= at;
+    const stillThere = next.some((segment) => sameSegment(segment, car) || contains(car, segment));
+    if (waiting && (cancel || (next.length > 0 && !stillThere)))
+      slid.splice(index, 1);
+  }
+}
+
+/* Car windows a clock poll replaced or deleted. The widest issued window is the one the day shows. Changes are newest first, as the archive returns them. */
+export function carsSlidAway(changes: PlanChange[]): DecisionSegment[] {
+  const ordered = [...changes].reverse();
+  let current: DecisionSegment[] = [];
+  const slid: DecisionSegment[] = [];
+  for (const change of ordered) {
+    const next = change.segments.filter((segment) => segment.kind === "car");
+    if (change.trigger === "The clock") {
+      for (const car of current) {
+        if (!next.some((segment) => sameSegment(segment, car)) && minutes(change.at) < minutes(car.to))
+          slid.push(car);
+      }
+    } else {
+      forgetReplanned(slid, change, next);
+    }
+    current = next;
+  }
+  return slid.filter((car, index) => !slid.some((other, otherIndex) =>
+    otherIndex !== index && contains(other, car) && !sameSegment(other, car)
+  ));
+}
+
+/* The decision to save. A car the clock slid away is put back, then the proposal is merged. */
+export function settleDecision(
+  stored: DecisionSegment[],
+  proposed: DecisionSegment[],
+  now: string,
+  changes: PlanChange[],
+  holdOpenCar: boolean
+): DecisionSegment[] {
+  const base = [...stored];
+  for (const car of carsSlidAway(changes)) {
+    if (!base.some((segment) => segment.kind === "car" && sameSegment(segment, car)))
+      base.push(car);
+  }
+  return mergeDecision(base, proposed, now, holdOpenCar);
 }
 
 /* A line when the hours still ahead changed, carrying the plan as it stood afterwards. */

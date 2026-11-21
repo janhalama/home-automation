@@ -10,6 +10,7 @@ import { createApp } from "../src/create-app.js";
 import { createDatePair } from "../src/lib/date.js";
 import { openHouseArchive } from "../src/services/house-archive.js";
 import { pragueTimestamp } from "../src/services/house-collector.js";
+import { addDays } from "../src/services/sun-clock.js";
 
 describe("energy JSON", () => {
   it("returns price, heater, and power on one timeline", async () => {
@@ -166,6 +167,69 @@ describe("energy JSON", () => {
     expect(body.heatingOn).toBe(true);
     expect(body.tankTemperatureC).toBe(48);
     expect(body.priceEurPerMwh).toBe(55);
+    expect(body.socPercent).toBeNull();
+    expect(body.medianEurPerMwh).toBe(55);
+    await app.close();
+  });
+
+  it("returns this month's purchases and sales, and the sun measured today", async () => {
+    const { todayKey, tomorrowKey } = createDatePair();
+    const today = pragueTimestamp(new Date()).slice(0, 10);
+    const [year, month, day] = today.split("-");
+    const dir = mkdtempSync(join(tmpdir(), "energy-month-"));
+    const archivePath = join(dir, "house.sqlite");
+    const archive = openHouseArchive(archivePath);
+    const before = addDays(`${year}-${month}-01`, -1);
+    archive.savePowerSample({ at: `${before}T12:00:00`, pvKw: 9, meterKw: -4, batteryKw: 0, socPercent: 50 });
+    archive.savePowerSample({ at: `${before}T12:15:00`, pvKw: 0, meterKw: 0, batteryKw: 0, socPercent: 50 });
+    archive.saveSpotPrices([
+      { date: before, periodIndex: 48, periodInterval: "12:00-12:15", eurPerMwh: 500 }
+    ]);
+    archive.savePowerSample({ at: `${today}T12:00:00`, pvKw: 4, meterKw: -1, batteryKw: 0, socPercent: 50 });
+    archive.savePowerSample({ at: `${today}T12:15:00`, pvKw: 0, meterKw: 2, batteryKw: 0, socPercent: 50 });
+    archive.savePowerSample({ at: `${today}T12:30:00`, pvKw: 0, meterKw: 0, batteryKw: 0, socPercent: 64 });
+    archive.saveSpotPrices([
+      { date: today, periodIndex: 48, periodInterval: "12:00-12:15", eurPerMwh: 100 },
+      { date: today, periodIndex: 49, periodInterval: "12:15-12:30", eurPerMwh: 80 }
+    ]);
+    archive.close();
+
+    const app = createApp({
+      apiKey: "secret-key",
+      cacheTtlSeconds: 3600,
+      timeoutMs: 8000,
+      forecastSolarApiKey: "",
+      houseArchivePath: archivePath,
+      wattsonicDaysDir: dir,
+      fetchImpl: async (url: string) => {
+        if (url.includes("cnb.cz"))
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({}),
+            text: async () => `Currency: EUR\nAmount: 1\n${day}.${month}.${year}|25\n`
+          };
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ result: { [todayKey]: 1000, [tomorrowKey]: 2000 } })
+        };
+      }
+    });
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/energy/live",
+      headers: { "x-api-key": "secret-key" }
+    });
+    const body = response.json();
+
+    expect(response.statusCode).toBe(200);
+    expect(body.monthImportCzk).toBeCloseTo(0.25 * (100 * 25 / 1000 + 1.5));
+    expect(body.monthExportCzk).toBeCloseTo(0.5 * (80 * 25 / 1000));
+    expect(body.todayProductionKwh).toBeCloseTo(1);
+    expect(body.socPercent).toBe(64);
+    expect(body.medianEurPerMwh).toBe(90);
     await app.close();
   });
 });

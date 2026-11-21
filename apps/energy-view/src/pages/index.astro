@@ -1,23 +1,11 @@
 ---
 import "../styles/material.css";
 
-const liveStats = ["FVE today", "FVE tomorrow", "Heater now", "Tank", "Price now"];
-const dayStats = [
-  "EUR rate",
-  "Grid purchase",
-  "Export",
-  "Sun saved",
-  "Day balance",
-  "Bought cheaply",
-  "Sold expensively",
-  "Battery stayed safe",
-  "Morning export was wise",
-  "Import price",
-  "Day median",
-  "Minutes under 20%",
-  "Lowest charge",
-  "Tank on the cheap half"
-];
+const nowStats = ["Price now", "Battery", "Tank"];
+const sunStats = ["Forecast today", "Produced", "Still to come", "Tomorrow"];
+const monthStats = ["Bought", "Sold", "Net"];
+const moneyStats = ["Net", "Bought from the grid", "Sold", "Sun kept"];
+const checkStats = ["Bought cheaply", "Sold expensively", "Battery", "Morning export", "Tank"];
 const apiBase = import.meta.env.PUBLIC_ENERGY_API_BASE;
 if (!apiBase)
   throw new Error("Missing PUBLIC_ENERGY_API_BASE");
@@ -41,7 +29,7 @@ const dayCharts = [
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Halamaci automation</title>
+    <title>Halamaci house energy</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
@@ -50,66 +38,83 @@ const dayCharts = [
   </head>
   <body>
     <header>
-      <h1>Halamaci automation</h1>
+      <div class="page-column header-row">
+        <h1>Halamaci house energy</h1>
+        <div class="day-nav">
+          <md-outlined-button id="prev-day" type="button">Previous</md-outlined-button>
+          <md-outlined-button id="today" type="button">Today</md-outlined-button>
+          <md-outlined-button id="next-day" type="button">Next</md-outlined-button>
+          <md-outlined-text-field id="day" label="Day" type="date"></md-outlined-text-field>
+        </div>
+        <div class="conn-slot">
+          <md-outlined-button id="connection-open" type="button" hidden>Connection</md-outlined-button>
+          <md-menu id="connection-menu" anchor="connection-open" positioning="popover" stay-open-on-focusout></md-menu>
+        </div>
+      </div>
     </header>
-    <main>
-      <section class="card">
+    <main class="page-column">
+      <md-elevated-card class="card" id="connection-card">
         <h2>Connection</h2>
         <form id="connection">
-          <label>API address
-            <input id="api-base" name="apiBase" value={apiBase} autocomplete="url" />
-          </label>
-          <label>API key
-            <input id="api-key" name="apiKey" type="password" autocomplete="off" />
-          </label>
-          <label>Day
-            <input id="day" name="day" type="date" />
-          </label>
-          <button id="prev-day" type="button" class="quiet">Previous</button>
-          <button id="today" type="button" class="quiet">Today</button>
-          <button id="next-day" type="button" class="quiet">Next</button>
-          <button type="submit">Load</button>
+          <md-outlined-text-field id="api-base" label="API address" type="url" autocomplete="url" value={apiBase}></md-outlined-text-field>
+          <md-outlined-text-field id="api-key" label="API key" type="password" autocomplete="off"></md-outlined-text-field>
+          <md-filled-button type="submit">Load</md-filled-button>
         </form>
-        <p id="status" class="status" role="status"></p>
-      </section>
+      </md-elevated-card>
+      <p id="status" class="status" role="status"></p>
 
-      <section class="card">
-        <h2>House now</h2>
-        <p class="note">These are measurements. The day below is one clock: what drove the plan, then each plan beside what happened.</p>
-        <div id="live" class="stats">
-          {liveStats.map((label) => <div class="stat"><span>{label}</span><strong class="pending">—</strong></div>)}
+      <md-elevated-card class="card">
+        <h2>Now</h2>
+        <div id="live-now" class="stats">
+          {nowStats.map((label) => <div class="stat"><span>{label}</span><strong class="pending">—</strong></div>)}
         </div>
-        <button id="recalculate-plan" type="button">Recalculate plan</button>
-        <p id="plan-note" class="note"></p>
-      </section>
-
-      <section class="card">
-        <h2>This day</h2>
-        <p class="note">Import, export, and the balance use that day's ČNB euro rate. Import also pays 1.5 Kč/kWh distribution. Sun saved is the solar energy that stayed in the house, valued at that same import price.</p>
-        <div id="scores" class="stats">
-          {dayStats.map((label) => <div class="stat"><span>{label}</span><strong class="pending">—</strong></div>)}
+        <h2 class="follows">Sun</h2>
+        <div id="live-sun" class="stats">
+          {sunStats.map((label) => <div class="stat"><span>{label}</span><strong class="pending">—</strong></div>)}
         </div>
         <p id="forecast-deviation" class="note"></p>
-      </section>
+        <h2 class="follows">This month</h2>
+        <div id="live-month" class="stats">
+          {monthStats.map((label) => <div class="stat"><span>{label}</span><strong class="pending">—</strong></div>)}
+        </div>
+      </md-elevated-card>
 
-      <section class="card">
+      <md-elevated-card class="card">
+        <h2>This day</h2>
+        <p class="note">Import pays the spot price plus 1.5 Kč/kWh distribution. Export pays the spot price. Sun kept is the solar energy that stayed in the house, valued at that import price.</p>
+        <div id="day-money" class="stats">
+          {moneyStats.map((label) => <div class="stat"><span>{label}</span><strong class="pending">—</strong></div>)}
+        </div>
+        <p id="day-rate" class="note"></p>
+        <div id="day-checks" class="stats">
+          {checkStats.map((label) => <div class="stat"><span>{label}</span><strong class="pending">—</strong></div>)}
+        </div>
+      </md-elevated-card>
+
+      <md-elevated-card class="card">
         <h2>Day balance</h2>
         <p class="note">The last 30 days. Above zero is the import: house, battery charge, car, and tank. Export hangs below zero.</p>
         <div class="chart-wrap" role="img" aria-label="Day balance chart"><canvas id="balance-history"></canvas></div>
-      </section>
+      </md-elevated-card>
 
-      <section class="card">
+      <md-elevated-card class="card">
         <h2>House reserve</h2>
         <p class="note">The line that used to sit at 50%. The night always stays above the 20% outage floor. That morning's sun is taken off the daylight only. A day with too few quiet nights uses the seasonal tables.</p>
         <div class="chart-wrap" role="img" aria-label="House reserve chart"><canvas id="reserve-history"></canvas></div>
-      </section>
+      </md-elevated-card>
 
-      <section class="card">
+      <md-elevated-card class="card">
         <h2>The plan</h2>
+        <p id="loxone-pull" class="pull-banner" role="status" hidden></p>
         <p id="day-label" class="note"></p>
         <p id="plan-line" class="note"></p>
+        <md-filled-button id="recalculate-plan" type="button">Recalculate plan</md-filled-button>
+        <p id="plan-note" class="note"></p>
         <div id="plan-bar" class="plan-bar"></div>
-        <ul id="plan-changes" class="plan-changes"></ul>
+        <div class="plan-history">
+          <md-outlined-button id="plan-changes-open" type="button" hidden aria-expanded="false" aria-controls="plan-changes">Plan changes</md-outlined-button>
+          <ul id="plan-changes" class="plan-changes" hidden></ul>
+        </div>
         <div id="plan-snapshot" class="plan-snapshot" hidden></div>
         <h2 class="follows">Where the energy went</h2>
         <div id="day-rows">
@@ -120,7 +125,7 @@ const dayCharts = [
             </section>
           ))}
         </div>
-      </section>
+      </md-elevated-card>
     </main>
     <script>
       import "../scripts/dashboard.ts";

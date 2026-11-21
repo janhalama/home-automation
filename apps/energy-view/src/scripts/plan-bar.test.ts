@@ -3,7 +3,7 @@ The plan bar keeps a started hour solid and a later hour hatched.
 */
 
 import { describe, expect, it } from "vitest";
-import { parseChangeList, parseSegmentList, planBarBlocks, type StoredSegment } from "./plan-bar.ts";
+import { parseChangeList, parseSegmentList, planBarBlocks, resultParts, triggerKind, type StoredSegment } from "./plan-bar.ts";
 
 const tank: StoredSegment = { kind: "tank", from: "08:00", to: "12:00", kw: 2.5, mode: "" };
 const later: StoredSegment = { kind: "tank", from: "20:00", to: "23:00", kw: 2.5, mode: "" };
@@ -47,5 +47,16 @@ describe("plan bar", () => {
     expect(parseSegmentList("car 23:00-24:00 11 grid")).toEqual([
       { kind: "car", from: "23:00", to: "24:00", kw: 11, mode: "grid" }
     ]);
+  });
+
+  it("splits a result into lines and groups the trigger", () => {
+    expect(resultParts("Tank 00:30–04:45. Car grid 00:30–01:45. Battery buy 00:30–01:45 at 2.5 kW.")).toEqual([
+      "Tank 00:30–04:45",
+      "Car grid 00:30–01:45",
+      "Battery buy 00:30–01:45 at 2.5 kW"
+    ]);
+    expect(triggerKind("Expected sun")).toBe("sun");
+    expect(triggerKind("The clock")).toBe("clock");
+    expect(triggerKind("Something new")).toBe("other");
   });
 });

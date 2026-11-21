@@ -2,8 +2,10 @@
  Loxone programming block that pulls the energy plan and holds the live decision.
 
  This replaces the forecast fetch block. The trigger is not used.
- The block fetches when it starts, and again every minute.
- A failed fetch tries again after one minute. Retrying every second runs the block out of memory.
+ The block fetches when it starts, and again every 10 minutes.
+ A failed fetch tries again after 10 minutes. Retrying every second runs the block out of memory.
+ httpget has no timeout, so a fetch is a TCP stream read. Each read waits at most
+ 15 seconds. A stuck call is given up, and the stored plan stays until a later pull works.
  A plan older than one hour is no longer fresh.
  - I1: the old trigger. Leave the wire or remove it. Nothing reads it.
  - I2: the solar block. The wire stays. The plan does not read it.
@@ -75,9 +77,12 @@
 #define FETCH_PHASE_MISSING 4
 #define FETCH_PHASE_UNEXPECTED 5
 
-#define FETCH_SECONDS 60
-#define RETRY_SECONDS 60
+#define FETCH_SECONDS 600
+#define RETRY_SECONDS 600
 #define FRESH_SECONDS 3600
+#define HTTP_TIMEOUT_MS 15000
+#define HTTP_BODY_SIZE 4096
+#define HTTP_READ_LIMIT 4
 
 char tankFlag[16];
 char tankFrom[8];
@@ -104,6 +109,8 @@ int sinceFetch;
 int sinceAttempt;
 int fetchPhase;
 int fetchBeat;
+int httpTimedOut;
+char httpBody[HTTP_BODY_SIZE];
 char lastError[80];
 char pollErrorCode[32];
 
@@ -113,16 +120,127 @@ void markFetch(int phase) {
     setio(VI_PLAN_FETCH, phase * FETCH_PHASE_SCALE + (fetchBeat % FETCH_PHASE_SCALE));
 }
 
+/* Split a server address into host and port. The port text is 80 when the address has none. */
+int copyHostPort(char* server, char* host, int hostSize, char* port, int portSize) {
+    char* colon;
+    int hostLength;
+    int portLength;
+    int index;
+    colon = strstr(server, ":");
+    if (colon == NULL) {
+        hostLength = strlen(server);
+        if (hostLength <= 0 || hostLength >= hostSize)
+            return 0;
+        sprintf(host, "%s", server);
+        sprintf(port, "80");
+        return 1;
+    }
+    hostLength = colon - server;
+    portLength = strlen(colon + 1);
+    if (hostLength <= 0 || hostLength >= hostSize || portLength <= 0 || portLength >= portSize)
+        return 0;
+    index = 0;
+    while (index < hostLength) {
+        host[index] = server[index];
+        index = index + 1;
+    }
+    host[hostLength] = 0;
+    sprintf(port, "%s", colon + 1);
+    return 1;
+}
+
+/* Byte index of the body, or -1 while the headers are still incomplete. */
+int headerBytes(char* text) {
+    char* marker;
+    marker = strstr(text, "\r\n\r\n");
+    if (marker != NULL)
+        return (marker - text) + 4;
+    marker = strstr(text, "\n\n");
+    if (marker != NULL)
+        return (marker - text) + 2;
+    return -1;
+}
+
+/* Bytes the server promised, or -1 when the header does not say. */
+int contentLength(char* text) {
+    char* marker;
+    int value;
+    marker = strstr(text, "Content-Length:");
+    if (marker == NULL)
+        marker = strstr(text, "content-length:");
+    if (marker == NULL)
+        return -1;
+    marker = marker + 15;
+    while (marker[0] == ' ')
+        marker = marker + 1;
+    value = 0;
+    if (marker[0] < '0' || marker[0] > '9')
+        return -1;
+    while (marker[0] >= '0' && marker[0] <= '9') {
+        value = value * 10 + (marker[0] - '0');
+        marker = marker + 1;
+    }
+    return value;
+}
+
+/* GET one page and stop when the server sends nothing. The buffer is reused and must not be freed. */
+char* httpGet(char* serverAddress, char* page) {
+    char host[80];
+    char port[8];
+    char device[112];
+    char request[768];
+    char hostHeader[96];
+    STREAM* stream;
+    int got;
+    int count;
+    int reads;
+    int headers;
+    int length;
+
+    httpTimedOut = 0;
+    if (copyHostPort(serverAddress, host, 80, port, 8) == 0)
+        return NULL;
+    sprintf(device, "/dev/tcp/%s/%s", host, port);
+    stream = stream_create(device, 0, 0);
+    if (stream == NULL)
+        return NULL;
+    if (port[0] == '8' && port[1] == '0' && port[2] == 0)
+        sprintf(hostHeader, "%s", host);
+    else
+        sprintf(hostHeader, "%s:%s", host, port);
+    sprintf(request, "GET %s HTTP/1.0\r\nHost: %s\r\nConnection: close\r\n\r\n", page, hostHeader);
+    stream_write(stream, request, strlen(request));
+    stream_flush(stream);
+    got = 0;
+    httpBody[0] = 0;
+    reads = 0;
+    while (reads < HTTP_READ_LIMIT && got < HTTP_BODY_SIZE - 1) {
+        count = stream_read(stream, httpBody + got, HTTP_BODY_SIZE - 1 - got, HTTP_TIMEOUT_MS);
+        reads = reads + 1;
+        if (count <= 0)
+            break;
+        got = got + count;
+        httpBody[got] = 0;
+        headers = headerBytes(httpBody);
+        length = contentLength(httpBody);
+        if (headers >= 0 && length >= 0 && got >= headers + length)
+            break;
+    }
+    stream_close(stream);
+    if (got <= 0) {
+        httpTimedOut = 1;
+        return NULL;
+    }
+    return httpBody;
+}
+
 /* Tell the API why this pull failed. A short code keeps the key's request small. */
 void reportPollError(char* serverAddress, char* apiKey) {
     char url[512];
-    char* response;
     if (pollErrorCode[0] == 0)
         return;
     sprintf(url, "/api/energy/plan-log?apiKey=%s&error=%s", apiKey, pollErrorCode);
-    response = httpget(serverAddress, url);
-    if (response != NULL)
-        free(response);
+    httpGet(serverAddress, url);
 }
 
 /* Skip HTTP response headers and return the body. */
@@ -190,10 +308,16 @@ int pullPlan(char* serverAddress, char* apiKey) {
     sprintf(url, "/api/energy/plan?apiKey=%s", apiKey);
     setoutputtext(DEBUG_URL, "/api/energy/plan");
     markFetch(FETCH_PHASE_CALLING);
-    response = httpget(serverAddress, url);
+    response = httpGet(serverAddress, url);
     if (response == NULL) {
-        sprintf(lastError, "error: no response from server");
-        sprintf(pollErrorCode, "no_response");
+        if (httpTimedOut)
+            sprintf(lastError, "error: timed out");
+        else
+            sprintf(lastError, "error: no response from server");
+        if (httpTimedOut)
+            sprintf(pollErrorCode, "timeout");
+        else
+            sprintf(pollErrorCode, "no_response");
         markFetch(FETCH_PHASE_NO_RESPONSE);
         setoutputtext(DEBUG_RESPONSE, "");
         return 0;
@@ -204,7 +328,6 @@ int pullPlan(char* serverAddress, char* apiKey) {
         sprintf(pollErrorCode, "no_response");
         markFetch(FETCH_PHASE_NO_RESPONSE);
         setoutputtext(DEBUG_RESPONSE, "");
-        free(response);
         return 0;
     }
     setoutputtext(DEBUG_RESPONSE, body);
@@ -212,7 +335,6 @@ int pullPlan(char* serverAddress, char* apiKey) {
         sprintf(lastError, "error: unexpected response");
         sprintf(pollErrorCode, "unexpected_response");
         markFetch(FETCH_PHASE_UNEXPECTED);
-        free(response);
         return 0;
     }
     lastError[0] = 0;
@@ -238,7 +360,6 @@ int pullPlan(char* serverAddress, char* apiKey) {
     copyValue(body, "reserveSoc", reserveSocText, 16);
     hasPlan = 1;
     markFetch(FETCH_PHASE_STORED);
-    free(response);
     return 1;
 }
 

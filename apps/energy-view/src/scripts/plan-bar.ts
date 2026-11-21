@@ -240,18 +240,101 @@ export function renderPlanBar(host: HTMLElement, segments: StoredSegment[], now:
   }${tracks}${hours}${rects}${line}</svg></div>`;
 }
 
-/* The lines under the bar. Choosing one opens that plan over the day. */
+const TRIGGER_KIND = new Map<string, string>([
+  ["Booked charge ended", "charge"],
+  ["Today's prices", "prices"],
+  ["Tomorrow's prices arrived", "prices"],
+  ["Tank fell below 55°C", "tank"],
+  ["Tank reached 55°C", "tank"],
+  ["Car plugged in", "car"],
+  ["Car no longer needs a charge", "car"],
+  ["Night charging turned off", "car"],
+  ["Night charging turned on", "car"],
+  ["Battery state of charge", "battery"],
+  ["Expected sun", "sun"],
+  ["Recent house use", "house"],
+  ["Season", "season"],
+  ["The clock", "clock"]
+]);
+
+/* Badge group for a trigger sentence. An unknown reason stays neutral. */
+export function triggerKind(trigger: string): string {
+  return TRIGGER_KIND.get(trigger) ?? "other";
+}
+
+/* One result sentence becomes one line. The trailing period is display noise. */
+export function resultParts(result: string): string[] {
+  const parts = result
+    .split(/(?<=\.)\s+/)
+    .map((part) => part.replace(/\.$/, "").trim())
+    .filter((part) => part !== "");
+  return parts.length > 0 ? parts : [result];
+}
+
+/* Closed label names how many changes exist. Open label puts them away. */
+function changeListLabel(count: number, open: boolean): string {
+  return open ? "Hide plan changes" : `Plan changes (${count})`;
+}
+
+/* Show or hide the list. The button stays available whenever the day has lines. */
+export function toggleChangeList(list: HTMLElement, opener: HTMLElement): void {
+  if (list.childElementCount === 0)
+    return;
+  const open = list.hidden;
+  list.hidden = !open;
+  opener.setAttribute("aria-expanded", String(open));
+  opener.textContent = changeListLabel(list.childElementCount, open);
+}
+
+/* One field: a short name, then the trigger badge or the result lines. */
+function changeField(label: string, value: HTMLElement): HTMLElement {
+  const field = document.createElement("span");
+  field.className = "plan-field";
+  const name = document.createElement("span");
+  name.className = "plan-field-label";
+  name.textContent = label;
+  field.append(name, value);
+  return field;
+}
+
+/* The lines under the bar, closed until asked. Choosing one opens that plan over the day. */
 export function renderChangeList(list: HTMLElement, snapshot: HTMLElement, lines: ChangeLine[]): void {
+  const opener = document.querySelector("#plan-changes-open");
+  const keepOpen = !list.hidden && list.childElementCount > 0 && lines.length > 0;
   list.replaceChildren();
   snapshot.hidden = true;
   for (const line of lines) {
     const item = document.createElement("li");
     const button = document.createElement("button");
     button.type = "button";
-    button.textContent = `${line.at} ${line.trigger} ${line.result}`;
+    button.className = "plan-change";
+    const time = document.createElement("time");
+    time.dateTime = line.at;
+    time.textContent = line.at;
+    const badge = document.createElement("span");
+    badge.className = "plan-trigger";
+    badge.dataset.kind = triggerKind(line.trigger);
+    badge.textContent = line.trigger;
+    const results = document.createElement("span");
+    results.className = "plan-results";
+    for (const part of resultParts(line.result)) {
+      const result = document.createElement("span");
+      result.textContent = part;
+      results.append(result);
+    }
+    const body = document.createElement("span");
+    body.className = "plan-change-body";
+    body.append(changeField("Trigger", badge), changeField("Result", results));
+    button.append(time, body);
     button.addEventListener("click", () => openSnapshot(snapshot, line));
     item.append(button);
     list.append(item);
+  }
+  list.hidden = !keepOpen;
+  if (opener instanceof HTMLElement) {
+    opener.hidden = lines.length === 0;
+    opener.setAttribute("aria-expanded", String(keepOpen));
+    opener.textContent = changeListLabel(lines.length, keepOpen);
   }
 }
 
