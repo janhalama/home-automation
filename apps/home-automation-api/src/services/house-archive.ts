@@ -54,6 +54,7 @@ export type HouseArchive = {
   appendPlanChange(date: string, change: PlanChange): void;
   readPlanInputs(date: string): PlanInputs | null;
   savePlanInputs(date: string, inputs: PlanInputs): void;
+  database: DatabaseSync;
   close(): void;
 };
 
@@ -432,6 +433,7 @@ export function openHouseArchive(path: string): HouseArchive {
         temperatureC: row.temperature_c
       };
     },
+    database,
     close() {
       database.close();
     }
