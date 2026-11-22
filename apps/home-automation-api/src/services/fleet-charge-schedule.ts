@@ -69,7 +69,9 @@ async function commandWasAccepted(response: Response): Promise<boolean> {
   }
 }
 
-/* Post add or remove. A rejected, thrown, or unreadable command returns null. */
+const COMMAND_TIMEOUT_MS = 15000;
+
+/* Post add or remove. A rejected, hung, thrown, or unreadable command returns null. */
 export async function sendCarSchedule(input: {
   proxyUrl: string;
   vin: string;
@@ -77,6 +79,7 @@ export async function sendCarSchedule(input: {
   date: string;
   lat: number;
   lon: number;
+  timeoutMs?: number;
   fetchImpl?: CommandFetch;
 }): Promise<CarSchedule | null> {
   const command = input.action.action === "add" ? "add_charge_schedule" : "remove_charge_schedule";
@@ -95,7 +98,8 @@ export async function sendCarSchedule(input: {
       {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(body)
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(input.timeoutMs ?? COMMAND_TIMEOUT_MS)
       }
     );
     if (!await commandWasAccepted(response))

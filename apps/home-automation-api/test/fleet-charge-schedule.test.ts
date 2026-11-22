@@ -71,4 +71,27 @@ describe("fleet charge schedule", () => {
     });
     expect(sent).toBeNull();
   });
+
+  it("returns null when the proxy never answers", async () => {
+    const sent = await sendCarSchedule({
+      proxyUrl: "http://proxy.example",
+      vin: "VIN",
+      action: { action: "add", slot: { from: "02:30", to: "03:45" } },
+      date: "2026-11-22",
+      lat: 50.6920036,
+      lon: 15.2203556,
+      timeoutMs: 50,
+      fetchImpl: (_url, init) => new Promise<Response>((_resolve, reject) => {
+        const signal = init?.signal;
+        if (!signal)
+          return;
+        const fail = () => reject(signal.reason ?? new Error("aborted"));
+        if (signal.aborted)
+          fail();
+        else
+          signal.addEventListener("abort", fail, { once: true });
+      })
+    });
+    expect(sent).toBeNull();
+  });
 });
