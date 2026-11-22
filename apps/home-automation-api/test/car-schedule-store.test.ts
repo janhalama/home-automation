@@ -17,7 +17,10 @@ describe("car schedule store", () => {
     expect(store.read()).toBeNull();
     store.save({ id: 1, from: "02:30", to: "03:45" });
     expect(store.read()).toEqual({ id: 1, from: "02:30", to: "03:45" });
+    store.save({ id: 1, from: "22:45", to: "24:00" });
+    expect(store.read()).toEqual({ id: 1, from: "22:45", to: "24:00" });
     store.clear();
     expect(store.read()).toBeNull();
+    archive.close();
   });
 });
