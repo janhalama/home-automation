@@ -7,7 +7,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { formatErrorResponse } from "../lib/plain-text-response.js";
 import { carJobFromReading, type CarReading } from "../services/car-energy.js";
 import { chargeWindow, keepChargeWindow, type ChargeWindow } from "../services/charge-commitment.js";
-import { buildEnergyPlan, formatEnergyPlan, type EnergyPlan } from "../services/energy-plan.js";
+import { buildEnergyPlan, formatEnergyPlan, planForWallbox, type EnergyPlan } from "../services/energy-plan.js";
 import {
   chargeJustEnded,
   commandFromDecision,
@@ -416,7 +416,7 @@ export function registerEnergyPlanRoute(app: FastifyInstance, deps: EnergyPlanDe
       });
       if (isMiniserverPlanPull(request))
         pulls.noteSuccess(deps.clock?.() ?? new Date());
-      const text = formatEnergyPlan(issued);
+      const text = formatEnergyPlan(planForWallbox(issued));
       const cover = sunCover ? `sunCoversFrom=${sunCover.from}\nsunCoversTo=${sunCover.to}\n` : "";
       const stored = archive.listDayDecisions(date);
       const picture = stored.length > 0 || date <= today ? stored : segmentsFromPlan(issued);

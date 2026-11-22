@@ -13,6 +13,7 @@ import { czkPerKwh, type SpotPrice } from "./ote-day-ahead.js";
 import { nextPriceRise, type PriceRise } from "./price-rise.js";
 import { overnightKwh, reserveSocPercent, type Season } from "./seasonal-profile.js";
 import { addDays, sunClocks } from "./sun-clock.js";
+import { wallboxWindow } from "./wallbox-window.js";
 
 const TANK_LITERS = 200;
 const TANK_TARGET_C = 55;
@@ -768,6 +769,14 @@ export function buildEnergyPlan(input: {
     batteryHoldTo: null,
     reserveSoc
   };
+}
+
+/* The text the Miniserver reads. A grid slot is opened one quarter early and closed one quarter late. */
+export function planForWallbox(plan: EnergyPlan): EnergyPlan {
+  if (plan.car !== "on" || !plan.carFrom || !plan.carTo)
+    return plan;
+  const window = wallboxWindow(plan.carFrom, plan.carTo);
+  return { ...plan, carFrom: window.from, carTo: window.to };
 }
 
 /* Plain text the Miniserver program already knows how to parse. */

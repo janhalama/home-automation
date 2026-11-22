@@ -3,7 +3,7 @@ Tests for the tank, car, and battery lines of one plan.
 */
 
 import { describe, expect, it } from "vitest";
-import { buildEnergyPlan as planWithLoad, formatEnergyPlan } from "../src/services/energy-plan.js";
+import { buildEnergyPlan as planWithLoad, formatEnergyPlan, planForWallbox, type EnergyPlan } from "../src/services/energy-plan.js";
 import type { SpotPrice } from "../src/services/ote-day-ahead.js";
 import { daylightHouseKwh, nightHouseKwh } from "../src/services/seasonal-profile.js";
 import { sunClocks } from "../src/services/sun-clock.js";
@@ -36,6 +36,30 @@ function prices(intervals: Array<[string, number]>): SpotPrice[] {
     eurPerMwh
   }));
 }
+
+/* A plan with every load off, so a test can turn one load on. */
+const offPlan: EnergyPlan = {
+  tank: "off",
+  tankFrom: null,
+  tankTo: null,
+  car: "off",
+  carFrom: null,
+  carTo: null,
+  carKw: 0,
+  battery: "hold",
+  batteryKw: 0,
+  batteryFrom: null,
+  batteryTo: null,
+  batterySellFrom: null,
+  batterySellTo: null,
+  batterySellKw: 0,
+  batteryDischargeKw: 0,
+  batteryDischargeFrom: null,
+  batteryDischargeTo: null,
+  batteryHoldFrom: null,
+  batteryHoldTo: null,
+  reserveSoc: 20
+};
 
 const night = prices([
   ["01:00-01:15", 200],
@@ -1063,5 +1087,29 @@ describe("energy plan", () => {
     });
     expect(plan.batteryFrom).toBe("00:00");
     expect(plan.batteryTo).toBe("01:00");
+  });
+
+  it("tells the wallbox to open one quarter around a grid slot", () => {
+    const text = formatEnergyPlan(planForWallbox({
+      ...offPlan,
+      car: "on",
+      carFrom: "02:30",
+      carTo: "03:45",
+      carKw: 11
+    }));
+    expect(text).toContain("carFrom=02:15");
+    expect(text).toContain("carTo=04:00");
+  });
+
+  it("leaves a battery slot on its booked clocks", () => {
+    const text = formatEnergyPlan(planForWallbox({
+      ...offPlan,
+      car: "battery",
+      carFrom: "09:00",
+      carTo: "11:00",
+      carKw: 6
+    }));
+    expect(text).toContain("carFrom=09:00");
+    expect(text).toContain("carTo=11:00");
   });
 });
