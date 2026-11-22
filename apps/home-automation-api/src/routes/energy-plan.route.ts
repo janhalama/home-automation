@@ -419,6 +419,15 @@ export function registerEnergyPlanRoute(app: FastifyInstance, deps: EnergyPlanDe
         daylightHouseKwh: load.daylightKwh,
         season
       });
+      if (isMiniserverPlanPull(request))
+        pulls.noteSuccess(deps.clock?.() ?? new Date());
+      const text = formatEnergyPlan(planForWallbox(issued));
+      const cover = sunCover ? `sunCoversFrom=${sunCover.from}\nsunCoversTo=${sunCover.to}\n` : "";
+      const stored = archive.listDayDecisions(date);
+      const picture = stored.length > 0 || date <= today ? stored : segmentsFromPlan(issued);
+      const storedText = formatStoredDecision(picture, archive.listPlanChanges(date));
+      reply.status(200).type("text/plain; charset=utf-8").send(`${text}${cover}${storedText}`);
+      /* The plan text is already handed to the reply. The car command must not hold it. */
       if (lookAhead) {
         try {
           const scheduleStore = carScheduleStore(archive.database);
@@ -430,33 +439,28 @@ export function registerEnergyPlanRoute(app: FastifyInstance, deps: EnergyPlanDe
             carMissingKwh: car ? car.missingKwh : null
           });
           if (action.action !== "keep" && deps.teslaCommandProxyUrl !== "" && deps.teslaVin !== "") {
-            const sent = await sendCarSchedule({
+            void sendCarSchedule({
               proxyUrl: deps.teslaCommandProxyUrl,
               vin: deps.teslaVin,
               action,
               date,
               lat: HOUSE.lat,
               lon: HOUSE.lon
+            }).then((sent) => {
+              if (sent === null)
+                request.log.warn("car schedule was not accepted");
+              else if (action.action === "add")
+                scheduleStore.save(sent);
+              else
+                scheduleStore.clear();
+            }).catch((error) => {
+              request.log.warn({ err: error }, "car schedule was not accepted");
             });
-            if (sent === null)
-              request.log.warn("car schedule was not accepted");
-            else if (action.action === "add")
-              scheduleStore.save(sent);
-            else
-              scheduleStore.clear();
           }
         } catch (error) {
           request.log.warn({ err: error }, "car schedule was not accepted");
         }
       }
-      if (isMiniserverPlanPull(request))
-        pulls.noteSuccess(deps.clock?.() ?? new Date());
-      const text = formatEnergyPlan(planForWallbox(issued));
-      const cover = sunCover ? `sunCoversFrom=${sunCover.from}\nsunCoversTo=${sunCover.to}\n` : "";
-      const stored = archive.listDayDecisions(date);
-      const picture = stored.length > 0 || date <= today ? stored : segmentsFromPlan(issued);
-      const storedText = formatStoredDecision(picture, archive.listPlanChanges(date));
-      reply.status(200).type("text/plain; charset=utf-8").send(`${text}${cover}${storedText}`);
     }
   });
 }

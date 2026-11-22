@@ -38,6 +38,26 @@ describe("car schedule action", () => {
     })).toEqual({ action: "keep" });
   });
 
+  it("keeps an open charge when a later grid window is still ahead", () => {
+    expect(carScheduleAction({
+      segments: [morning, tonight],
+      sent,
+      now: "03:00",
+      carAtHome: true,
+      carMissingKwh: 13.5
+    })).toEqual({ action: "keep" });
+  });
+
+  it("adds the grid window that still covers now when nothing was sent", () => {
+    expect(carScheduleAction({
+      segments: [morning, tonight],
+      sent: null,
+      now: "03:00",
+      carAtHome: true,
+      carMissingKwh: 13.5
+    })).toEqual({ action: "add", slot: { from: "02:30", to: "03:45" } });
+  });
+
   it("replaces the schedule when a later slot is still ahead", () => {
     expect(carScheduleAction({
       segments: [morning, tonight],
