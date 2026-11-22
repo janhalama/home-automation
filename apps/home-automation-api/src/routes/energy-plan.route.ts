@@ -6,8 +6,11 @@ import { Type } from "@fastify/type-provider-typebox";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { formatErrorResponse } from "../lib/plain-text-response.js";
 import { carJobFromReading, type CarReading } from "../services/car-energy.js";
+import { carScheduleAction } from "../services/car-schedule.js";
+import { carScheduleStore } from "../services/car-schedule-store.js";
+import { sendCarSchedule } from "../services/fleet-charge-schedule.js";
 import { chargeWindow, keepChargeWindow, type ChargeWindow } from "../services/charge-commitment.js";
-import { buildEnergyPlan, formatEnergyPlan, type EnergyPlan } from "../services/energy-plan.js";
+import { buildEnergyPlan, formatEnergyPlan, planForWallbox, type EnergyPlan } from "../services/energy-plan.js";
 import {
   chargeJustEnded,
   commandFromDecision,
@@ -46,6 +49,8 @@ export type EnergyPlanDeps = {
   timeoutMs: number;
   readNightCharging?: () => Promise<boolean>;
   clock?: () => Date;
+  teslaCommandProxyUrl: string;
+  teslaVin: string;
 };
 
 /* Refuse a call that has no server key or the wrong client key. */
@@ -416,12 +421,46 @@ export function registerEnergyPlanRoute(app: FastifyInstance, deps: EnergyPlanDe
       });
       if (isMiniserverPlanPull(request))
         pulls.noteSuccess(deps.clock?.() ?? new Date());
-      const text = formatEnergyPlan(issued);
+      const text = formatEnergyPlan(planForWallbox(issued));
       const cover = sunCover ? `sunCoversFrom=${sunCover.from}\nsunCoversTo=${sunCover.to}\n` : "";
       const stored = archive.listDayDecisions(date);
       const picture = stored.length > 0 || date <= today ? stored : segmentsFromPlan(issued);
       const storedText = formatStoredDecision(picture, archive.listPlanChanges(date));
       reply.status(200).type("text/plain; charset=utf-8").send(`${text}${cover}${storedText}`);
+      /* The plan text is already handed to the reply. The car command must not hold it. */
+      if (lookAhead) {
+        try {
+          const scheduleStore = carScheduleStore(archive.database);
+          const action = carScheduleAction({
+            segments: archive.listDayDecisions(date),
+            sent: scheduleStore.read(),
+            now: pragueClock(now),
+            carAtHome: car ? car.atHome : null,
+            carMissingKwh: car ? car.missingKwh : null
+          });
+          if (action.action !== "keep" && deps.teslaCommandProxyUrl !== "" && deps.teslaVin !== "") {
+            void sendCarSchedule({
+              proxyUrl: deps.teslaCommandProxyUrl,
+              vin: deps.teslaVin,
+              action,
+              date,
+              lat: HOUSE.lat,
+              lon: HOUSE.lon
+            }).then((sent) => {
+              if (sent === null)
+                request.log.warn("car schedule was not accepted");
+              else if (action.action === "add")
+                scheduleStore.save(sent);
+              else
+                scheduleStore.clear();
+            }).catch((error) => {
+              request.log.warn({ err: error }, "car schedule was not accepted");
+            });
+          }
+        } catch (error) {
+          request.log.warn({ err: error }, "car schedule was not accepted");
+        }
+      }
     }
   });
 }

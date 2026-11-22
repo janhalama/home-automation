@@ -41,6 +41,8 @@ type CreateAppDeps = Omit<
   | "teslamateDatabaseUser"
   | "teslamateDatabasePassword"
   | "teslamateDatabaseName"
+  | "teslaCommandProxyUrl"
+  | "teslaVin"
 > & {
   predictionDbPath?: string;
   houseArchivePath?: string;
@@ -53,6 +55,8 @@ type CreateAppDeps = Omit<
   loxoneHost?: string;
   loxoneUser?: string;
   loxonePassword?: string;
+  teslaCommandProxyUrl?: string;
+  teslaVin?: string;
   readCar?: () => Promise<CarReading>;
   readCarDay?: (date: string) => Promise<CarPoint[]>;
   clock?: () => Date;
@@ -176,6 +180,8 @@ export function createApp(deps: CreateAppDeps = createEnvironmentDeps()) {
     forecastSolarApiKey: deps.forecastSolarApiKey,
     timeoutMs: deps.timeoutMs,
     clock: deps.clock,
+    teslaCommandProxyUrl: deps.teslaCommandProxyUrl ?? "",
+    teslaVin: deps.teslaVin ?? "",
     readNightCharging: deps.loxoneHost && deps.loxoneUser
       ? async () => nightChargingAllowed(await readLoxoneControl(
         deps.loxoneHost ?? "",
