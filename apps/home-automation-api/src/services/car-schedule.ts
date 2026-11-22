@@ -36,7 +36,8 @@ export function carScheduleAction(input: {
   carMissingKwh: number | null;
 }): CarScheduleAction {
   const readingMissing = input.carAtHome === null || input.carMissingKwh === null;
-  const finished = !readingMissing && (input.carAtHome === false || input.carMissingKwh <= 0);
+  const chargeFinished = input.carMissingKwh !== null && input.carMissingKwh <= 0;
+  const finished = !readingMissing && (input.carAtHome === false || chargeFinished);
   if (finished)
     return input.sent ? { action: "remove" } : { action: "keep" };
   const slot = nextGridSlot(input.segments, input.now);
