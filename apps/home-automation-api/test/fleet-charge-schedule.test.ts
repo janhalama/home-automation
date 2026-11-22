@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { addChargeScheduleBody, removeChargeScheduleBody } from "../src/services/fleet-charge-schedule.js";
+import { addChargeScheduleBody, removeChargeScheduleBody, sendCarSchedule } from "../src/services/fleet-charge-schedule.js";
 
 describe("fleet charge schedule", () => {
   it("builds a one-time schedule for the booked slot", () => {
@@ -38,5 +38,37 @@ describe("fleet charge schedule", () => {
 
   it("removes schedule 1", () => {
     expect(removeChargeScheduleBody()).toEqual({ id: 1 });
+  });
+
+  it("posts add_charge_schedule and returns the schedule that was accepted", async () => {
+    const calls: { url: string; body: unknown }[] = [];
+    const sent = await sendCarSchedule({
+      proxyUrl: "http://proxy.example",
+      vin: "VIN",
+      action: { action: "add", slot: { from: "02:30", to: "03:45" } },
+      date: "2026-11-22",
+      lat: 50.6920036,
+      lon: 15.2203556,
+      fetchImpl: async (url, init) => {
+        calls.push({ url: String(url), body: JSON.parse(String(init?.body)) });
+        return new Response(JSON.stringify({ response: { result: true } }), { status: 200 });
+      }
+    });
+    expect(calls[0].url).toBe("http://proxy.example/api/1/vehicles/VIN/command/add_charge_schedule");
+    expect(calls[0].body).toMatchObject({ one_time: true, id: 1, start_time: 150 });
+    expect(sent).toEqual({ id: 1, from: "02:30", to: "03:45" });
+  });
+
+  it("returns null when the proxy rejects the command", async () => {
+    const sent = await sendCarSchedule({
+      proxyUrl: "http://proxy.example",
+      vin: "VIN",
+      action: { action: "remove" },
+      date: "2026-11-22",
+      lat: 50.6920036,
+      lon: 15.2203556,
+      fetchImpl: async () => new Response("no", { status: 500 })
+    });
+    expect(sent).toBeNull();
   });
 });

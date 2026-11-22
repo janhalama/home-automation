@@ -19,6 +19,8 @@ export type EnvironmentConfig = {
   teslamateDatabaseUser: string;
   teslamateDatabasePassword: string;
   teslamateDatabaseName: string;
+  teslaCommandProxyUrl: string;
+  teslaVin: string;
 };
 
 /* Read API key configuration without crashing serverless startup. */
@@ -55,6 +57,8 @@ export function readEnvironmentConfig(): EnvironmentConfig {
     teslamateDatabaseHost: process.env.TESLAMATE_DATABASE_HOST?.trim() ?? "",
     teslamateDatabaseUser: process.env.TESLAMATE_DATABASE_USER?.trim() ?? "",
     teslamateDatabasePassword: process.env.TESLAMATE_DATABASE_PASSWORD ?? "",
-    teslamateDatabaseName: process.env.TESLAMATE_DATABASE_NAME?.trim() ?? ""
+    teslamateDatabaseName: process.env.TESLAMATE_DATABASE_NAME?.trim() ?? "",
+    teslaCommandProxyUrl: process.env.TESLA_COMMAND_PROXY_URL?.trim() ?? "",
+    teslaVin: process.env.TESLA_VIN?.trim() ?? ""
   };
 }

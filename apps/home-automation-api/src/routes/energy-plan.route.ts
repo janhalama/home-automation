@@ -6,6 +6,9 @@ import { Type } from "@fastify/type-provider-typebox";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { formatErrorResponse } from "../lib/plain-text-response.js";
 import { carJobFromReading, type CarReading } from "../services/car-energy.js";
+import { carScheduleAction } from "../services/car-schedule.js";
+import { carScheduleStore } from "../services/car-schedule-store.js";
+import { sendCarSchedule } from "../services/fleet-charge-schedule.js";
 import { chargeWindow, keepChargeWindow, type ChargeWindow } from "../services/charge-commitment.js";
 import { buildEnergyPlan, formatEnergyPlan, planForWallbox, type EnergyPlan } from "../services/energy-plan.js";
 import {
@@ -46,6 +49,8 @@ export type EnergyPlanDeps = {
   timeoutMs: number;
   readNightCharging?: () => Promise<boolean>;
   clock?: () => Date;
+  teslaCommandProxyUrl: string;
+  teslaVin: string;
 };
 
 /* Refuse a call that has no server key or the wrong client key. */
@@ -414,6 +419,36 @@ export function registerEnergyPlanRoute(app: FastifyInstance, deps: EnergyPlanDe
         daylightHouseKwh: load.daylightKwh,
         season
       });
+      if (lookAhead) {
+        try {
+          const scheduleStore = carScheduleStore(archive.database);
+          const action = carScheduleAction({
+            segments: archive.listDayDecisions(date),
+            sent: scheduleStore.read(),
+            now: pragueClock(now),
+            carAtHome: car ? car.atHome : null,
+            carMissingKwh: car ? car.missingKwh : null
+          });
+          if (action.action !== "keep" && deps.teslaCommandProxyUrl !== "" && deps.teslaVin !== "") {
+            const sent = await sendCarSchedule({
+              proxyUrl: deps.teslaCommandProxyUrl,
+              vin: deps.teslaVin,
+              action,
+              date,
+              lat: HOUSE.lat,
+              lon: HOUSE.lon
+            });
+            if (sent === null)
+              request.log.warn("car schedule was not accepted");
+            else if (action.action === "add")
+              scheduleStore.save(sent);
+            else
+              scheduleStore.clear();
+          }
+        } catch (error) {
+          request.log.warn({ err: error }, "car schedule was not accepted");
+        }
+      }
       if (isMiniserverPlanPull(request))
         pulls.noteSuccess(deps.clock?.() ?? new Date());
       const text = formatEnergyPlan(planForWallbox(issued));
